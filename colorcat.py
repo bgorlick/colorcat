@@ -3,7 +3,7 @@
 # Colorcat - A powerful yet simple syntax highlighter for the terminal viewing of files.
 # (c) 2024 - Ben Gorlick | MIT License | Attribution to the original author is required - free to use, modify, and distribute.
 # Colorcat enhances viewing of file contents in the terminal by colorizing syntax.
-# Version: 0.1.0.0
+# Version: 0.0.0.2
 
 # At times neither cat, nor bat are make seperating concerns when viewing dense files easy.  This is where colorcat comes in. 
 # Colorcat is a simplified syntax highlighter for terminal use, utilizing Python's pygmentize.
@@ -13,12 +13,11 @@
 
 # The concepts demonstrated are easily extendable to create your own custom syntax highlighting filters and styles in other projects.
 
-# Usage: colorcat.py [filename] [-ln] [-aug] [-aug-font] [-aug-bg] [-hln]
+# Pygments can apply the 256-color terminal formatter and also map colors to use the 8 default ANSI colors. 
+# Those are: ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'].
+# Usage: colorcat.py [filename] [-ln] [-hln]
 #   filename: The file to be highlighted
 #   -ln, --line-numbers: Display line numbers
-#   -aug, --augment-lines: Specify lines to augment, separated by commas (e.g., "2,5,7")
-#   -aug-font, --augment-font-style: Font style for augmented lines (e.g., "bold")
-#   -aug-bg, --augment-background-color: Background color for augmented lines (e.g., "on grey")
 #   -hln, --highlight-lines: Highlight lines with a grey background, separated by commas (e.g., "10,30")
 #   -m, --meow: Make the cat go meow
 
@@ -29,264 +28,457 @@
 # Just rename it to colorcat, and move it to a directory in your PATH, such as /usr/local/bin, and make it executable with chmod +x colorcat.
 # PS. --meow is a fun little easter egg that makes the cat go meow.
 
+# Todo Ideas: 
+# - A dynamic brute force method that tries a multitude of styles and filters, saving each to a file, outputting the # to the user as it goes.
+# - Style templates that are easy to save and load, and can be shared with others.
+# - A way to save and load custom styles and filters (coming soon)
+# - A way to adjust the colors of the syntax highlighting (disabled for now, coming soon along with offesetting colors)
 
-
+import re
+from collections import defaultdict
 import argparse
 import sys
+import io
+import os
 from pygments import highlight
-from pygments.lexers import guess_lexer_for_filename
+from pygments.lexers import guess_lexer_for_filename, guess_lexer, get_lexer_by_name
 from pygments.formatters.terminal256 import Terminal256Formatter
 from pygments.style import Style
 from pygments.token import Token, Generic
 from pygments.filters import Filter
 from pygments.styles import get_all_styles, get_style_by_name
-import traceback
+import traceback # for debugging
 import random
+import signal
+import itertools
 
 
-#  how to Filter using hex colors and how to extend a style
+sys.stdout.write("\x1b[?7l")
+
+# added this for illustrative purposes, to show how to create a custom style and extend an existing one
 class CustomStyle(Style):
-    # we hex in pygments and not the terminal 5-bit color mode as [38;5 is not supported by pygments
-
     default_style = ""
-    styles = {
-        Token.Generic.Subheading: 'bg:#f0f0f0',
-        Token.LineNumber: 'bg:#f0f0f0', # Line numbers are colored the same as subheadings
+    styles_for_light_text = {
+        Token.Generic.Subheading: 'bg:[48;47m', 
+    }
+
+    styles_for_dark_text = {
+        Token.Generic.Subheading: 'bg:#f0f0f0', 
+        Token.LineNumber: 'bg:#f0f0f0' 
     }
 
 def extend_style(base_style_name):
     base = get_style_by_name(base_style_name)
     extended_styles = base.styles.copy()
     extended_styles.update(CustomStyle.styles)
-    return type(f'Extended{base_style_name}', (Style,), {'default_style': '', 'styles': extended_styles})
+    return type('ExtendedStyle', (base,), {'styles': extended_styles})
 
-
-class LineAugmentationFilter(Filter):
-    def __init__(self, lines_to_augment, **options):
-        self.lines_to_augment = {int(line) for line in lines_to_augment.split(',')}
-        super().__init__(**options)
-
-    def filter(self, lexer, stream):
-        line_number = 1
-        for ttype, value in stream:
-            if "\n" in value:
-                for part in value.split('\n'):
-                    if line_number in self.lines_to_augment:
-                        yield Token.Generic.Subheading, part
-                    else:
-                        yield ttype, part
-                    if part != value.split('\n')[-1]:  # Avoid incrementing on the last empty split result
-                        line_number += 1
-            else:
-                yield ttype, value
-
-
-# SpecificHighlightFilter is a filter that highlights brackets and quotes and various other things using ascii 5-bit color codes
 class SpecificHighlightFilter(Filter):
-    bracket_colors = {
-    #sometimes brackets are hard to see and often they are used together like this {()[]} so we will give them each a slightly different shade seperated by 2 colors in the 5-bit color mode
-        'bracket_braces': '\033[38;5;194m',
-        'bracket_parens': '\033[38;5;196m', 
-        'bracket_square': '\033[38;5;199m', 
-        'bracket_angle': '\033[38;5;201m',
-        'pink': '\033[38;5;198m',
-        'white': '\033[38;5;231m',
-        'light_grey': '\033[38;5;243m',
-        'grey': '\033[38;5;245m',
-        'yellow': '\033[38;5;224m',
-        'orange': '\033[38;5;211m',
-        'purple': '\033[38;5;141m',
-        'red': '\033[38;5;196m',
-        'green': '\033[38;5;120m',
-        'blue': '\033[38;5;117m',
-        'cyan': '\033[38;5;87m',
-        'between_cyan_and_blue': '\033[38;5;81m',
-        'light_blue': '\033[38;5;117m',
-        'light_green': '\033[38;5;120m',
-        'light_red': '\033[38;5;196m',
-        'light_purple': '\033[38;5;141m',
-        'light_yellow': '\033[38;5;226m',
-        'blood_orange': '\033[38;5;203m',
-        'light_orange': '\033[38;5;214m',
-        'light_pink': '\033[38;5;207m', 
-        'black': '\033[38;5;0m',
+    meow_colors = {
+        'escape_sequence': '\033[38;5;93m',
+        'curly_braces': '\033[38;5;1m', # curly braces
+        'parens': '\033[38;5;163m', 
+        'bracket_square': '\033[38;5;202m', 
+        'pacman_greaterthan_lessthan': '\033[38;5;201m',
+        'single_quote': '\033[38;5;11m',
+        'double_quote': '\033[38;5;51m',
+        'smart_quote': '\033[38;5;84m',
+        'curly_quote': '\033[38;5;86m',
+        'right_single_quotation_mark': '\033[38;5;123m',
+        'double_low_9_quotation_mark': '\033[38;5;121m', # german/polish quotes :) sprechen sie deutsch?
+        'multi_line_comment': '\033[38;5;32m',
+        'single_line_comment': '\033[38;5;36m',
+        'backtick': '\033[38;5;47m',
+        'comma': '\033[38;5;112m',
+        'colon': '\033[38;5;172m',
+        'semicolon': '\033[38;5;79m',
+        'period': '\033[38;5;184m',
+        'ellipsis': '\033[38;5;186m',
+        'exclamation': '\033[38;5;155m',
+        'question': '\033[38;5;87m',
+        'strings': '\033[38;5;81m',
+        'function_names': '\033[38;5;189m',
+        'conditionals': '\033[38;5;209m',
+        'builtin_functions': '\033[38;5;181m',
+        'numbers': '\033[38;5;11m',
+        'operators': '\033[38;5;207m',
+        'punctuation': '\033[38;5;87m',
+        'variables': '\033[38;5;203m',
         'reset': '\033[0m'
     }
     def filter(self, _, stream):
-        reset_color = SpecificHighlightFilter.bracket_colors['reset']
+        reset_color = SpecificHighlightFilter.meow_colors['reset']
         for ttype, value in stream:
             if value in "[]":
-                yield Token.Text,  SpecificHighlightFilter.bracket_colors['bracket_square'] + value + reset_color
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['bracket_square'] + value + reset_color
             elif value in "{}":
-                yield Token.Text,  SpecificHighlightFilter.bracket_colors['bracket_braces'] + value + reset_color
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['curly_braces'] + value + reset_color
             elif value in "()":
-                yield Token.Text,  SpecificHighlightFilter.bracket_colors['bracket_parens'] + value + reset_color
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['parens'] + value + reset_color
             elif value in "<>":
-                yield Token.Text,  SpecificHighlightFilter.bracket_colors['bracket_angle'] + value + reset_color
-            elif value in "\"'":
-                yield Token.Text,  SpecificHighlightFilter.bracket_colors['yellow'] + value + reset_color
-            elif ttype in Token.Comment: # Multi-line comments
-                yield Token.Comment,  SpecificHighlightFilter.bracket_colors['light_blue'] + value + reset_color
-            elif ttype in Token.Comment.Single: # Single-line comments, but wont be used because its already defined above (just showing to illustrate the point)
-                yield Token.Comment.Single,  SpecificHighlightFilter.bracket_colors['light_green'] + value + reset_color
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['pacman_greaterthan_lessthan'] + value + reset_color
+            # highlight the escape sequences
+            elif value in "\\": 
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['escape_sequence'] + value + reset_color
+            elif value in "'": 
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['single_quote'] + value + reset_color
+            elif value in "\"": # backslash to escape the double quote
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['double_quote'] + value + reset_color
+            elif value in "`": # backtick
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['backtick'] + value + reset_color
+            elif value in "“”":
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['curly_quote'] + value + reset_color
+            elif value in "’": # right single quotation mark
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['right_single_quotation_mark'] + value + reset_color
+            elif value in "„": # double low-9 quotation mark
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['double_low_9_quotation_mark'] + value + reset_color
+            elif value in ",": # comma
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['comma'] + value + reset_color
+            elif value in ":": # colon
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['colon'] + value + reset_color
+            elif value in ";": # semicolon
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['semicolon'] + value + reset_color
+            elif value in ".": # period
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['period'] + value + reset_color
+            elif value in "…": # ellipsis
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['ellipsis'] + value + reset_color
+            elif value in "!": # exclamation
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['exclamation'] + value + reset_color
+            elif value in "?": # question
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['question'] + value + reset_color
+            elif ttype in Token.Comment.Multiline: # Multi-line comments
+                yield Token.Comment.Multiline,  SpecificHighlightFilter.meow_colors['multi_line_comment'] + value + reset_color
+            elif ttype in Token.Comment.Single: # Single-line comments
+                yield Token.Comment.Single,  SpecificHighlightFilter.meow_colors['single_line_comment'] + value + reset_color
             elif ttype in Token.Literal.String: # Strings
-                yield Token.Literal.String,  SpecificHighlightFilter.bracket_colors['light_grey'] + value + reset_color
-            elif ttype in Token.Literal.String.Single: # Single-quoted strings (but wont be used because its already defined above)
-                yield Token.Literal.String.Single,  SpecificHighlightFilter.bracket_colors['light_red'] + value + reset_color 
+                yield Token.Literal.String,  SpecificHighlightFilter.meow_colors['strings'] + value + reset_color
+            elif ttype in Token.Literal.String.Single:
+                yield Token.Literal.String.Single,  SpecificHighlightFilter.meow_colors['strings'] + value + reset_color 
             # function names like this
-            elif ttype in Token.Name.Function:
-                yield Token.Name.Function,  SpecificHighlightFilter.bracket_colors['light_purple'] + value + reset_color
+            elif ttype in Token.Name.Function: #  function names
+                yield Token.Name.Function,  SpecificHighlightFilter.meow_colors['function_names'] + value + reset_color
             # conditionals like if else while for etc
-            elif ttype in Token.Keyword:
-                yield Token.Keyword,  SpecificHighlightFilter.bracket_colors['light_green'] + value + reset_color
+            elif ttype in Token.Keyword: # conditionals
+                yield Token.Keyword,  SpecificHighlightFilter.meow_colors['conditionals'] + value + reset_color
             # things like print, input, etc
             elif ttype in Token.Name.Builtin:
-                yield Token.Name.Builtin,  SpecificHighlightFilter.bracket_colors['between_cyan_and_blue'] + value + reset_color
+                yield Token.Name.Builtin,  SpecificHighlightFilter.meow_colors['builtin_functions'] + value + reset_color
             # numbers
             elif ttype in Token.Number:
-                yield Token.Number,  SpecificHighlightFilter.bracket_colors['light_yellow'] + value + reset_color
+                yield Token.Number,  SpecificHighlightFilter.meow_colors['numbers'] + value + reset_color
             # operators like + - * / etc
             elif ttype in Token.Operator:
-                yield Token.Operator,  SpecificHighlightFilter.bracket_colors['light_pink'] + value + reset_color
-            # punctuation like , . : ; etc
-            elif ttype in Token.Punctuation:
-                yield Token.Punctuation,  SpecificHighlightFilter.bracket_colors['cyan'] + value + reset_color
-            # variables
-            elif ttype in Token.Name:
-                yield Token.Name,  SpecificHighlightFilter.bracket_colors['blood_orange'] + value + reset_color
-            # handle subheadings for the background highlight filter ensuring the background is colored grey
+                yield Token.Operator,  SpecificHighlightFilter.meow_colors['operators'] + value + reset_color
+            elif ttype in Token.Name: # variables
+                yield Token.Name,  SpecificHighlightFilter.meow_colors['variables'] + value + reset_color
             elif ttype in Token.Generic.Subheading:
-                yield Token.Generic.Subheading,  SpecificHighlightFilter.bracket_colors['light_grey'] + value + reset_color
+                yield Token.Generic.Subheading,  SpecificHighlightFilter.meow_colors['light_grey'] + value + reset_color
             else:
                 yield ttype, value
 
 class BackgroundHighlightFilter(Filter):
-    def __init__(self, lines_to_highlight, bg_color='on grey', **options):
-        self.lines_to_highlight = set(int(line) for line in lines_to_highlight.split(','))
-        self.bg_color = bg_color
+
+    default_bg_hl_color = 239 
+
+    #def __init__(self, lines_to_highlight, bg_hl_color=None, **options):
+    def __init__(self, lines_to_highlight, bg_hl_color=None, font_style=None, font_color=None, **options):
+        if isinstance(lines_to_highlight, str):
+            self.lines_to_highlight = set(parse_line_ranges(lines_to_highlight))
+        elif isinstance(lines_to_highlight, set):
+            self.lines_to_highlight = lines_to_highlight
+        else:
+            raise ValueError("lines_to_highlight must be a set or a string.")
+        
+        self.bg_hl_color = bg_hl_color or BackgroundHighlightFilter.default_bg_hl_color
+        self.bg_color = f'\033[48;5;{self.bg_hl_color}m'
+
+        self.font_style = self.font_style_mapping(font_style) if font_style else ''
+        self.font_color = self.font_color_mapping(font_color) if font_color else ''
+        self.reset_color = '\033[0m'
         super().__init__(**options)
 
     def filter(self, lexer, stream):
         line_number = 1
         for ttype, value in stream:
-            if line_number in self.lines_to_highlight:
-                yield Token.Generic.Subheading, value
-            else:
-                yield ttype, value
-            if "\n" in value:
-                line_number += value.count('\n')
+            lines = value.split('\n')
+            for i, line in enumerate(lines):
+                if line_number in self.lines_to_highlight:
+                    # Here we call apply_styles to get the styled line
+                    styled_line = self.apply_styles(line)
+                    yield ttype, styled_line
+                    if i < len(lines) - 1:
+                        yield Token.Text, '\n'
+                else:
+                    yield ttype, line + ('\n' if i < len(lines) - 1 else '')
+                if i < len(lines) - 1:
+                    line_number += 1 
 
-def highlight_with_bracket_coloring(code, filename, show_line_numbers, lines_to_augment='', lines_to_highlight=''):
-    lexer = guess_lexer_for_filename(filename, code)
+    def apply_styles(self, line):
+        # Apply background color
+        bg_color_code = f'\033[48;5;{self.bg_hl_color}m' if self.bg_hl_color else ''
+        
+        # Apply font style and color
+        font_style_code = self.font_style_mapping(self.font_style) if self.font_style else ''
+        font_color_code = self.font_color_mapping(self.font_color) if self.font_color else ''
+        
+        return f"{bg_color_code}{font_style_code}{font_color_code}{line}{self.reset_color}"
+
+    @staticmethod
+    def font_style_mapping(style):
+        styles = {
+            'bold': '\033[1m',
+        }
+        return styles.get(style, '')
+
+    @staticmethod
+    def font_color_mapping(color):
+        colors = {
+            'red': '\033[31m',
+        }
+        return colors.get(color, '')
+
+
+def read_input(filename):
+    code = None
+    if not sys.stdin.isatty():
+        code = sys.stdin.read()
+        filename = filename or "stdin_input"
+    elif filename:
+        try:
+            with open(filename, 'r') as file:
+                code = file.read()
+        except FileNotFoundError:
+            print(f"File not found: {filename}", file=sys.stderr)
+            sys.exit(1)
+    return code, filename
+
+def highlight_with_colorcat_colors(code, filename=None, show_line_numbers=False, lines_to_highlight='', language=None):
+    try:
+        lexer = detect_language_type(code, filename, language) 
+    except Exception as e:
+        print(f"Fallback to plain text due to error: {e}", file=sys.stderr)
+        lexer = get_lexer_by_name("text")
     lexer.add_filter(SpecificHighlightFilter())
-    if lines_to_augment:
-        lexer.add_filter(LineAugmentationFilter(lines_to_augment))
-    if lines_to_highlight:
-        lexer.add_filter(BackgroundHighlightFilter(lines_to_highlight))
-
-    base_style_name = lexer.analyse_text(code) or 'friendly'  
+    base_style_name = lexer.analyse_text(code) or 'friendly'
     if base_style_name not in get_all_styles():
-        base_style_name = 'friendly'  
-
+        base_style_name = 'friendly'
     ExtendedStyle = extend_style(base_style_name)
-
     formatter = Terminal256Formatter(style=ExtendedStyle, linenos=show_line_numbers)
-    return highlight(code, lexer, formatter)
-
-
-def augment_lines_with_color_and_style(code, filename, show_line_numbers, lines_to_augment):
-    lexer = guess_lexer_for_filename(filename, code)
-    lexer.add_filter(LineAugmentationFilter(lines_to_augment))
-    formatter = Terminal256Formatter(linenos=show_line_numbers)
+    if lines_to_highlight:
+        bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
+        lexer.add_filter(BackgroundHighlightFilter(lines_to_highlight, bg_hl_color))
+    #    lexer.add_filter(BackgroundHighlightFilter(lines_to_highlight, bg_hl_color))
     highlighted_code = highlight(code, lexer, formatter)
     return highlighted_code
+
+def detect_language_type(code, filename=None, language=None):
+    """
+    Determine the appropriate lexer for the given code, filename, or language.
+    """
+    try:
+        if language:
+            return get_lexer_by_name(language, stripall=True)
+        elif filename:
+            return guess_lexer_for_filename(filename, code, stripall=True)
+        else:
+            return guess_lexer(code, stripall=True)
+    except Exception as e:
+        print(f"Error detecting language type: {e}", file=sys.stderr)
+        return get_lexer_by_name("text", stripall=True)
+
+# extending arg parser to accept line ranges
+def parse_line_ranges(line_ranges_str):
+    line_numbers = set()
+    ranges = line_ranges_str.split(',')
+    for part in ranges:
+        if '-' in part:
+            start, end = part.split('-')
+            line_numbers.update(range(int(start), int(end) + 1))
+        else:
+            line_numbers.add(int(part))
+    return line_numbers
+
+def print_language_detected(lexer):
+    random_color = f'\033[38;5;{random.randint(1, 255)}m'
+    reset_color = '\033[0m'
+    yellow_color = '\033[38;5;226m'
+    print(f"Language Detected: {yellow_color}[{random_color}{lexer.name}{reset_color}{yellow_color}]{reset_color}")
 
 colorcat_furballs = [
 "            .';::::::::::::::::::::::::::::::::::::::::::::::::::;,..           ","         .:dOKKKXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXKKOxc'         ","       .ck0KXXNNNNNNXXNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNXKNNNNNNNXXKOo'       ","      'd0KXXNNNNNWKc,;;cd0NWWWWWWWWWWWWWWWWWWWWWWWWWWWXkl;;;;kWNNNNNNXXKk;      ","     .d0KXXNNNNWWWo.:x,.'.:kNMMMMMMMMMMMMMMMMMMMMMMWOl..''od.;XWWNNNNXXXKk,     ","     ;kKXXXNNWWWMWc ;x;'l' .;xXMMMMMMMMMMMMMMMMMMWO:. .c;.do ,KMMWWNNXXXK0l.    ","     ;kKXXXNNWMMMWc :x;';l:;;.;kWWX0OkkxxxkO0KNW0c.,;;cc',do.'0MMMWNNXXKK0l.    ","     ;kKXXXNNWMMMWl ,d;cl;;c:;,.,,.'........'.',..;:c:;cl;lc ;XMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMk..l:';c'c;;c'c;.co;cc,c:lo.'l,::,c,;c';l,.lWMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMNc ;d:.ccc;;c,x:'ldclc;clld,,x:::;ccl';dc.'0MMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMM0,.locc'l,:c.;l';c.cl,c,:l'c:.;c'l;:llo'.xWMMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMMWo.ccloc;.'::.:c;:.cc,c,;ccc.,c,.'colcl';XMMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMWk..:ccol,lo.:;::;:.cc,c,;cc:,c'cd,:dccc'.lNMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMK,.::,co;.;:...,,,;,c;.c:;;;,.. ,c.'ll,;c'.xMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMd.,' 'lo:''.   '..:ol. :dc'..   .,,;lo;..;.;XMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMWc.;c,ox; ;o.  .oo.:o,...ll.,c   .dx..dx;;c.'0MMMWNNXXXKOl.    ","     ;kKXXXNNWMMMWl.::.cxdc;lc'.,oc..:c'';l'.,oc'.;lc;oxo',c.,KMMMWNNXXXKOl.    ","     ;kKXXNNNWMMMMx.':,,;;coccc:c'.,:,cc,c;;:..:c:cllc;;,,:;.lWMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMNl.,c,.;oxko:::c;';;cl;c:;,,::::cxxdc..c:.;KMMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMMXl',:::c::::cld0O,.:olc..d0xlc::::cc::;':0MMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMMMWx..col:,:lclkWWO:....,xNM0ocl:,:cll..lNMMMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMMMM0,;xl;;;;;:okXMMNo. ;XMMW0dc;;;;,cxc'xMMMMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMMMWx..lc.;,'c:,,:colcclclol:;':l,';';o' cNMMMMMMWNNXXXKOl.    ","     ;OKXXXNNWMMMMMM0'':okclccc;';;.:x0NNXkl.,:';:cclcxdc'.dWMMMMMWNNXXXKOl.    ","     ;OKXXXNNWMMMMMK;.,,,ccccc,;'.:;'.,;,;..,c'.;,clccl;,,..kWMMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMNc.''';:cod'.cl..cl;:c,:;:l'.:l..ldcc:,''.,0MMMMWNNXXXX0l.    ","     ;kKXXXNNWMMMMk.'oc::;:l;':o::::l::c,::cc:c:lc',c:;::co;.lWMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMWc :ko:dk:.'c:;.:l;;;l;.cc,;cl.':c: 'xkccko.,KMMMWNNXXXKOl.    ","     ;OKXXXNNWMMMWc :l.,kd'.clcxcl:.;c:;,;cc.,lcdocl'.ckc.cl.'0MMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMd';'.;;'''cc;d;c;.l,;ddc'l;'l;oc;l,'',;,.;'cNMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMXl.'ko:;ccc:...:l.:c'',':c':l...,lcc:;lk:.;0MMMMWNNXXXK0l.    ","     ;kKXXXNNWWMMMMNo.;,;ccdoo,;d:''.:l;'cc'.';oc,codlc:,:':KMMMMMWNNXXXK0l.    ","     ,xKXXXNNWWWMMMMW0l..':oco,.';':dclc;clol',,..lllc,..:kNMMMMMWWNNXXXKOc.    ","     .lOKXXNNNNWWWMMMMWKxc;..,...::...cc,c,..;c.. ''.,:o0WMMMMWWWNNNNXXKKx'     ","      .lOKXXNNNNNNNNNNNNNNXOxl:;','....'......,',:cokKNNNNNNNNNNNNNNNXK0d'      ","        ,dOKXXXXXNNNXXNNNNNNNNNNK0OkxdddddddxkOKXNNNNNNNNNNNNNNNNNXXK0x:.       ","         .,cdk00KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK000KKK0Oxl;.         ","             ..'''''''''''''''''''''''''''''''''''''''''''''''''''.             ","             Colorcat by Ben Gorlick (github: bgorlick) (c) 2024 | MIT     \n",
 ]
 
 # This will make the cat go meow
-def meow(colorcat, s_col):
+def meow(colorcat=None, s_col=1):
+    if colorcat is None:
+        colorcat = colorcat_furballs
     width = max(len(furball) for furball in colorcat)
     c_col = s_col
     grad_meow = []
+    print ("\n")
     for row in colorcat:
         grad_l = ""
         c_col = s_col
-        for column, char in enumerate(row):
+        for char in row:
             if char != ' ':
+                while c_col % 32 == 0:
+                    c_col += 1
                 grad_l += f"\x1b[38;5;{c_col % 32}m{char}\x1b[0m"
                 c_col += 1
             else:
                 grad_l += ' '
         grad_meow.append(grad_l)
-
-        # make cat go meow
-        # s_col += 50   # uncomment this to see variations in meow
-
     for furball in grad_meow:
         print(furball)
+    print("\n")
 
+def c_new_furball(input_text):
+    let_to_p = ["k", "K", "0", "X", "N", "W", "M", "c", "d", "l", "x", "o", "O"]
+    rep_chars = [char for char in input_text if char.isalnum()]
+    if not rep_chars:
+        return colorcat_furballs
+    new_furball = list(colorcat_furballs)
+    rep_i = itertools.cycle(rep_chars)
+    for i, line in enumerate(new_furball[:-1]):  
+        new_line = ""
+        for char in line:
+            if char in let_to_p:
+                new_line += next(rep_i)
+            else:
+                new_line += char
+        new_furball[i] = new_line
+    new_furball.append("\n      Look carefully at the furball you just created... meow it contains your code :)")
+    return new_furball
 
-# Main execution
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='ColorCat: Enhanced source code highlighting.')
-    parser.add_argument('filename', type=str, nargs='?', help='The file to be highlighted')
-    parser.add_argument('-ln', '--line-numbers', action='store_true', help='Display line numbers')
-    parser.add_argument('-aug', '--augment-lines', type=str, default='', help='Augment specific lines')
-    parser.add_argument('-hln', '--highlight-lines', type=str, default='', help='Highlight specific lines')
-    # this is for printing the furball
-    parser.add_argument('-meow', '--meow', action='store_true', help='Cat goes meow')
-    args = parser.parse_args()
+def capture_help_message(parser):
+    help_message = ""
+    with io.StringIO() as help_message:
+         parser.print_help(file=help_message)
+         help_message = help_message.getvalue()
+         return help_message
+    
 
-
-    if args.meow:
-        # cat meows in 256 different frequencies
-        meow(colorcat_furballs, random.randint(1, 255))
-        sys.exit(0)
-
-    if not args.filename:
-        meow(colorcat_furballs, random.randint(1, 255))
-        parser.print_help()
-        sys.exit(0)
-
-    try:
-        with open(args.filename, 'r') as file:
-            code = file.read()
-        lexer = guess_lexer_for_filename(args.filename, code)
-
-        # unnecessary but I wanted to show the detect language and use colors based on language detected
-        lexerColorProgrammingLanguage5BitColors = {
-            'cpp': '\033[38;5;23m', 'c': '\033[38;5;23m', 'c++': '\033[38;5;23m', 'c#': '\033[38;5;23m', 'java': '\033[38;5;23m', 'javascript': '\033[38;5;23m',
-            'typescript': '\033[38;5;23m', 'python': '\033[38;5;23m', 'ruby': '\033[38;5;23m', 'perl': '\033[38;5;23m', 'php': '\033[38;5;23m', 'go': '\033[38;5;23m',
-            'rust': '\033[38;5;23m', 'swift': '\033[38;5;23m', 'kotlin': '\033[38;5;23m', 'scala': '\033[38;5;23m', 'groovy': '\033[38;5;23m', 'r': '\033[38;5;23m',
-            'julia': '\033[38;5;23m', 'haskell': '\033[38;5;23m', 'dart': '\033[38;5;23m', 'lua': '\033[38;5;23m', 'elixir': '\033[38;5;23m', 'clojure': '\033[38;5;23m',
-            'erlang': '\033[38;5;23m', 'ocaml': '\033[38;5;23m', 'f#': '\033[38;5;23m', 'nim': '\033[38;5;23m', 'crystal': '\033[38;5;23m', 'cobol': '\033[38;5;23m',
-            'fortran': '\033[38;5;23m', 'ada': '\033[38;5;23m', 'pascal': '\033[38;5;23m', 'lisp': '\033[38;5;23m', 'scheme': '\033[38;5;23m', 'prolog': '\033[38;5;23m',
-            'forth': '\033[38;5;23m', 'abap': '\033[38;5;23m', 'apex': '\033[38;5;23m', 'bash': '\033[38;5;23m', 'shell': '\033[38;5;23m', 'powershell': '\033[38;5;23m',
-            'batch': '\033[38;5;23m', 'awk': '\033[38;5;23m', 'sed': '\033[38;5;23m', 'sql': '\033[38;5;23m', 'plsql': '\033[38;5;23m', 'tcl': '\033[38;5;23m',
-            'racket': '\033[38;5;23m', 'verilog': '\033[38;5;23m', 'vhdl': '\033[38;5;23m', 'systemverilog': '\033[38;5;23m', 'v': '\033[38;5;23m', 'assembly': '\033[38;5;23m',
-        }
-        # We need to account for the fact that the above names are all defined in lowercase but lexer will come through as uppercase
-        lexerBracketColor = {'yellow': '\033[38;5;226m', 'reset': '\033[0m'}
-        lexerColors5Bit = {k: lexerColorProgrammingLanguage5BitColors.get(k, '') for k in lexerColorProgrammingLanguage5BitColors.keys()}
-        lexerColor = lexerColors5Bit.get(lexer.name.lower(), '')
-
-        if lexerColor:
-            print(f"Language Detected: {lexerBracketColor['yellow']}[{lexerColor}{lexer.name}{lexerBracketColor['reset']}{lexerBracketColor['yellow']}]{lexerBracketColor['reset']}")
+def apply_syntax_highlighting_to_help(help_message):
+    colors = SpecificHighlightFilter.meow_colors
+    symbol_colors = {
+        '-': colors['operators'],
+        ':': colors['colon'],
+        '[': colors['bracket_square'],
+        ']': colors['bracket_square'],
+        ',': colors['comma'],
+        '.': colors['period'],
+        '(': colors['parens'],
+        ')': colors['parens']
+    }
+    highlighted_message = ""
+    for char in help_message:
+        if char in symbol_colors:
+            highlighted_message += f"{symbol_colors[char]}{char}{colors['reset']}"
         else:
-            print(f"Language Detected: {lexer.name}")
+            highlighted_message += f"{colors['strings']}{char}{colors['reset']}"
+    return highlighted_message
 
-        highlighted_code = highlight_with_bracket_coloring(
-            code, args.filename, args.line_numbers, args.augment_lines, args.highlight_lines)
-        print(highlighted_code, end='')
-    except FileNotFoundError:
-        print(f"File not found: {args.filename}", file=sys.stderr)
+
+# TODO: This is just the foundation for this feature, it's not fully implemented yet
+def offset_color(offset_args: str, config: dict) -> dict:
+    """Adjusts color values based on user-defined offsets. Supports global, foreground, and background offsetting with wrapping."""
+    def parse_offset_args(offset_args):
+        pattern = r"(all|\w+)(\d+),(\d+)"
+        matches = re.finditer(pattern, offset_args, re.IGNORECASE)
+        offsets = defaultdict(lambda: {'fg': 0, 'bg': 0})
+        for match in matches:
+            key, fg_offset, bg_offset = match.groups()
+            offsets[key] = {'fg': int(fg_offset), 'bg': int(bg_offset)}
+        return offsets
+
+    def wrap_color_value(value, offset, max_value=255):
+        return (value + offset) % max_value
+
+    def apply_offsets_to_config(config, offsets):
+        for key, value in config.items():
+            if key in offsets or 'all' in offsets:
+                fg_offset = offsets.get(key, offsets['all'])['fg']
+                bg_offset = offsets.get(key, offsets['all'])['bg']
+                config[key]['fg'] = wrap_color_value(value['fg'], fg_offset)
+                config[key]['bg'] = wrap_color_value(value['bg'], bg_offset)
+        return config
+
+    offsets = parse_offset_args(offset_args)
+    updated_config = apply_offsets_to_config(config, offsets)
+    return updated_config
+
+
+
+def main():
+    parser = argparse.ArgumentParser(description='ColorCat: Enhanced source code highlighting.')
+    parser.add_argument('filename', type=str, nargs='?', default=None, help='The file to be highlighted')
+    parser.add_argument('-ln', '--line-numbers', action='store_true', help='Display line numbers')
+    parser.add_argument('-hln', '--highlight-lines', type=str, default='', help='Highlight specific lines')
+    parser.add_argument('-lang', '--language', type=str, help='Explicitly specify the programming language')
+    parser.add_argument('-meow', '--meow', action='store_true', help='Cat goes meow')
+    args, unknown = parser.parse_known_args()
+    
+    try:
+        if '-h' in unknown or '--help' in unknown:
+            help_message = capture_help_message(parser)
+            highlighted_help_message = apply_syntax_highlighting_to_help(help_message)
+            print(highlighted_help_message)
+            sys.exit()
+
+        if args.highlight_lines:
+            lines_to_highlight = parse_line_ranges(args.highlight_lines)
+        else:
+            lines_to_highlight = set()
+
+
+        if args.meow:
+            input_text, filename = read_input(args.filename)
+            if input_text:  
+                new_furball = c_new_furball(input_text)
+                meow(new_furball, random.randint(1, 255))
+            else:
+                meow(colorcat_furballs, random.randint(1, 255))
+            return 
+
+        code, filename = read_input(args.filename)
+        if code:
+            lexer = detect_language_type(code, filename, args.language)
+            print_language_detected(lexer)
+            highlighted_code = highlight_with_colorcat_colors(
+                code, filename, args.line_numbers, 
+                lines_to_highlight, args.language
+            )
+            print(highlighted_code)
+        elif sys.stdin.isatty():  
+            meow(colorcat_furballs, random.randint(1, 255))
+            help_message = capture_help_message(parser)
+            highlighted_help_message = apply_syntax_highlighting_to_help(help_message)
+            print(f"\nNo input file was detected.\n {highlighted_help_message}\n")
+        else:
+            stdin_text = sys.stdin.read()
+            if args.line_numbers and not (args.highlight_lines or args.language):
+                print_with_line_numbers(stdin_text)
+            else:
+                highlighted_code = highlight_with_colorcat_colors(
+                    stdin_text, None, args.line_numbers, 
+                    lines_to_highlight, args.language
+                )
+                print(highlighted_code)
     except Exception as e:
-        error_message = traceback.format_exc()
-        print(f"An error occurred:\n{error_message}", file=sys.stderr)
+        print(f"An error occurred: {e}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
         sys.exit(1)
 
+def print_with_line_numbers(input_text):
+    for line_number, line in enumerate(input_text.splitlines(), start=1):
+        print(f"{line_number:4}: {line}")
 
-
-
+if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+    main()
+#    sys.stdout.write("\x1b[?7h")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    sys.exit(0)
