@@ -7,7 +7,7 @@
 # Initial colorcat framework that will get merged into colorcat.py -- it's a work in progress.
 # The idea here is to migrate the configuration and management of the configuration to YAML (colorcat currently is hard-coded w/ a JSON style color config)
 
-# This introduces themes, and will make supporting 'offsets' for foreground and background colors easier to manage. 
+# This introduces themes, and will make supporting 'offsets' for foreground and background colors easier to manage.
 # The idea is to enable a user to create a theme, and then apply offsets to the theme to create a new theme. 
 # This supports rapidly creating new themes, and also allows for the user to create a theme that is a 'child' of another theme, and then apply offsets to the child theme to create a new theme.
 
