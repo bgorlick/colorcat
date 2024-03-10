@@ -276,7 +276,9 @@ def highlight_with_colorcat_colors(input_text, filename=None, show_line_numbers=
         ExtendedStyle = extend_style(base_style_name)
         formatter = Terminal256Formatter(style=ExtendedStyle, linenos=show_line_numbers)
         if highlighted_lines:
-            bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
+            if not bg_hl_color:
+                bg_hl_color = 239
+            #bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
             lexer.add_filter(BackgroundHighlightFilter(highlighted_lines, bg_hl_color))
 
     else:
@@ -287,7 +289,9 @@ def highlight_with_colorcat_colors(input_text, filename=None, show_line_numbers=
         ExtendedStyle = extend_style(base_style_name)
         formatter = Terminal256Formatter(style=ExtendedStyle, linenos=show_line_numbers)
         if highlighted_lines:
-            bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
+            if not bg_hl_color:
+                bg_hl_color = 239
+            #bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
             lexer.add_filter(BackgroundHighlightFilter(highlighted_lines, bg_hl_color))
     
     highlighted_input = highlight(input_text, lexer, formatter)
