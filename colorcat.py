@@ -3,7 +3,7 @@
 # Colorcat - A powerful yet simple syntax highlighter for the terminal viewing of files.
 # (c) 2024 - Ben Gorlick | MIT License | Attribution to the original author is required - free to use, modify, and distribute.
 # Colorcat enhances viewing of file contents in the terminal by colorizing syntax.
-# Version: 0.0.0.2
+# Version: 0.0.0.3
 
 # At times neither cat, nor bat are make seperating concerns when viewing dense files easy.  This is where colorcat comes in. 
 # Colorcat is a simplified syntax highlighter for terminal use, utilizing Python's pygmentize.
@@ -43,6 +43,7 @@ import os
 from pygments import highlight
 from pygments.lexers import guess_lexer_for_filename, guess_lexer, get_lexer_by_name
 from pygments.formatters.terminal256 import Terminal256Formatter
+from pygments.util import ClassNotFound
 from pygments.style import Style
 from pygments.token import Token, Generic
 from pygments.filters import Filter
@@ -51,6 +52,8 @@ import traceback # for debugging
 import random
 import signal
 import itertools
+import random
+
 
 
 sys.stdout.write("\x1b[?7l")
@@ -180,10 +183,10 @@ class BackgroundHighlightFilter(Filter):
 
     default_bg_hl_color = 239 
 
-    #def __init__(self, lines_to_highlight, bg_hl_color=None, **options):
     def __init__(self, lines_to_highlight, bg_hl_color=None, font_style=None, font_color=None, **options):
+        super().__init__(**options)
         if isinstance(lines_to_highlight, str):
-            self.lines_to_highlight = set(parse_line_ranges(lines_to_highlight))
+            self.lines_to_highlight = parse_line_ranges(lines_to_highlight)
         elif isinstance(lines_to_highlight, set):
             self.lines_to_highlight = lines_to_highlight
         else:
@@ -195,7 +198,7 @@ class BackgroundHighlightFilter(Filter):
         self.font_style = self.font_style_mapping(font_style) if font_style else ''
         self.font_color = self.font_color_mapping(font_color) if font_color else ''
         self.reset_color = '\033[0m'
-        super().__init__(**options)
+
 
     def filter(self, lexer, stream):
         line_number = 1
@@ -238,50 +241,70 @@ class BackgroundHighlightFilter(Filter):
         return colors.get(color, '')
 
 
-def read_input(filename):
-    code = None
-    if not sys.stdin.isatty():
-        code = sys.stdin.read()
-        filename = filename or "stdin_input"
-    elif filename:
-        try:
-            with open(filename, 'r') as file:
-                code = file.read()
-        except FileNotFoundError:
-            print(f"File not found: {filename}", file=sys.stderr)
-            sys.exit(1)
-    return code, filename
-
-def highlight_with_colorcat_colors(code, filename=None, show_line_numbers=False, lines_to_highlight='', language=None):
+def highlight_with_colorcat_colors(input_text, filename=None, show_line_numbers=False, lines_to_highlight='', language=None, output_format='None', bg_hl_color=None):
+    if isinstance(lines_to_highlight, str):
+        highlighted_lines = parse_line_ranges(lines_to_highlight)
+    elif isinstance(lines_to_highlight, set):
+        highlighted_lines = lines_to_highlight
+    else:
+        raise ValueError("lines_to_highlight must be a set or a string.")
+    
+    # Adjusting to manage terminal-based "plain" output with background highlighting
     try:
-        lexer = detect_language_type(code, filename, language) 
+        lexer = detect_language_type(input_text, filename, language)
     except Exception as e:
         print(f"Fallback to plain text due to error: {e}", file=sys.stderr)
         lexer = get_lexer_by_name("text")
-    lexer.add_filter(SpecificHighlightFilter())
-    base_style_name = lexer.analyse_text(code) or 'friendly'
-    if base_style_name not in get_all_styles():
-        base_style_name = 'friendly'
-    ExtendedStyle = extend_style(base_style_name)
-    formatter = Terminal256Formatter(style=ExtendedStyle, linenos=show_line_numbers)
-    if lines_to_highlight:
-        bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
-        lexer.add_filter(BackgroundHighlightFilter(lines_to_highlight, bg_hl_color))
-    #    lexer.add_filter(BackgroundHighlightFilter(lines_to_highlight, bg_hl_color))
-    highlighted_code = highlight(code, lexer, formatter)
-    return highlighted_code
 
-def detect_language_type(code, filename=None, language=None):
-    """
-    Determine the appropriate lexer for the given code, filename, or language.
-    """
+    if output_format == 'plain':
+        # we are going to trick the lexer here like this -- we do this because we want plain text without any syntax highlighting, and possibly with background highlighting
+        lexer = get_lexer_by_name("text")
+        formatter = Terminal256Formatter(linenos=show_line_numbers)  # Only line numbers formatting applied
+        if highlighted_lines:
+            if not bg_hl_color:
+                bg_hl_color = 23 # change this to change bg color
+            #bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
+            lexer.add_filter(BackgroundHighlightFilter(highlighted_lines, bg_hl_color))
+            highlighted_input = highlight(input_text, lexer, formatter)
+        return highlighted_input
+
+    elif output_format == 'formatted':
+        lexer.add_filter(SpecificHighlightFilter())
+        base_style_name = lexer.analyse_text(input_text) or 'friendly'
+        if base_style_name not in get_all_styles():
+            base_style_name = 'friendly'
+        ExtendedStyle = extend_style(base_style_name)
+        formatter = Terminal256Formatter(style=ExtendedStyle, linenos=show_line_numbers)
+        if highlighted_lines:
+            bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
+            lexer.add_filter(BackgroundHighlightFilter(highlighted_lines, bg_hl_color))
+
+    else:
+        lexer.add_filter(SpecificHighlightFilter())
+        base_style_name = lexer.analyse_text(input_text) or 'friendly'
+        if base_style_name not in get_all_styles():
+            base_style_name = 'friendly'
+        ExtendedStyle = extend_style(base_style_name)
+        formatter = Terminal256Formatter(style=ExtendedStyle, linenos=show_line_numbers)
+        if highlighted_lines:
+            bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
+            lexer.add_filter(BackgroundHighlightFilter(highlighted_lines, bg_hl_color))
+    
+    highlighted_input = highlight(input_text, lexer, formatter)
+    return highlighted_input
+
+
+
+
+def detect_language_type(input_text, filename=None, language=None):
+    """Determine the appropriate lexer for the given input_text, filename, or language."""
     try:
         if language:
             return get_lexer_by_name(language, stripall=True)
         elif filename:
-            return guess_lexer_for_filename(filename, code, stripall=True)
+            return guess_lexer_for_filename(filename, input_text, stripall=True)
         else:
-            return guess_lexer(code, stripall=True)
+            return guess_lexer(input_text, stripall=True)
     except Exception as e:
         print(f"Error detecting language type: {e}", file=sys.stderr)
         return get_lexer_by_name("text", stripall=True)
@@ -289,13 +312,14 @@ def detect_language_type(code, filename=None, language=None):
 # extending arg parser to accept line ranges
 def parse_line_ranges(line_ranges_str):
     line_numbers = set()
-    ranges = line_ranges_str.split(',')
-    for part in ranges:
-        if '-' in part:
-            start, end = part.split('-')
-            line_numbers.update(range(int(start), int(end) + 1))
-        else:
-            line_numbers.add(int(part))
+    if line_ranges_str:
+        ranges = line_ranges_str.split(',')
+        for part in ranges:
+            if '-' in part:
+                start, end = part.split('-')
+                line_numbers.update(range(int(start), int(end) + 1))
+            else:
+                line_numbers.add(int(part))
     return line_numbers
 
 def print_language_detected(lexer):
@@ -335,7 +359,7 @@ def meow(colorcat=None, s_col=1):
 def c_new_furball(input_text):
     let_to_p = ["k", "K", "0", "X", "N", "W", "M", "c", "d", "l", "x", "o", "O"]
     rep_chars = [char for char in input_text if char.isalnum()]
-    if not rep_chars:
+    if len(rep_chars) < 10:
         return colorcat_furballs
     new_furball = list(colorcat_furballs)
     rep_i = itertools.cycle(rep_chars)
@@ -347,7 +371,7 @@ def c_new_furball(input_text):
             else:
                 new_line += char
         new_furball[i] = new_line
-    new_furball.append("\n      Look carefully at the furball you just created... meow it contains your code :)")
+    new_furball.append("\n      Look carefully at the furball you just created... meow it contains your input :)")
     return new_furball
 
 def capture_help_message(parser):
@@ -357,6 +381,16 @@ def capture_help_message(parser):
          help_message = help_message.getvalue()
          return help_message
     
+def filter_lines_by_range_with_line_numbers(input_text, line_ranges_str, include_line_numbers):
+    lines_to_keep = parse_line_ranges(line_ranges_str)
+    lines = input_text.splitlines()
+    filtered_lines = [(index, line) for index, line in enumerate(lines, start=1) if index in lines_to_keep]
+    if include_line_numbers:
+        formatted_lines = [f"{index:04d}: {line}" for index, line in filtered_lines]
+    else:
+        formatted_lines = [line for index, line in filtered_lines]
+    return "\n".join(formatted_lines)
+
 
 def apply_syntax_highlighting_to_help(help_message):
     colors = SpecificHighlightFilter.meow_colors
@@ -370,12 +404,7 @@ def apply_syntax_highlighting_to_help(help_message):
         '(': colors['parens'],
         ')': colors['parens']
     }
-    highlighted_message = ""
-    for char in help_message:
-        if char in symbol_colors:
-            highlighted_message += f"{symbol_colors[char]}{char}{colors['reset']}"
-        else:
-            highlighted_message += f"{colors['strings']}{char}{colors['reset']}"
+    highlighted_message = "".join(symbol_colors.get(symbols, colors['strings']) + symbols + colors['reset'] for symbols in help_message)
     return highlighted_message
 
 
@@ -407,17 +436,22 @@ def offset_color(offset_args: str, config: dict) -> dict:
     updated_config = apply_offsets_to_config(config, offsets)
     return updated_config
 
-
+    
 
 def main():
-    parser = argparse.ArgumentParser(description='ColorCat: Enhanced source code highlighting.')
+    # could we apply a bg highlight using c  directly on the word highlighting in the help message? 
+    parser = argparse.ArgumentParser(description='ColorCat: Enhanced \033[48;5;189mcat\033[0m with syntax highlighting')
     parser.add_argument('filename', type=str, nargs='?', default=None, help='The file to be highlighted')
     parser.add_argument('-ln', '--line-numbers', action='store_true', help='Display line numbers')
     parser.add_argument('-hln', '--highlight-lines', type=str, default='', help='Highlight specific lines')
-    parser.add_argument('-lang', '--language', type=str, help='Explicitly specify the programming language')
+    parser.add_argument('-lang', '-l', '--language', type=str, help='Explicitly specify the programming language')
+    parser.add_argument("-o", "--output", help="Output formatting option. Can be 'formatted' or 'plain'.", default='formatted')
+    parser.add_argument('-oln', '--only-show-lines', type=str, default='', help="Only show specific lines")
+    parser.add_argument('-bgcolor', '--background-color', type=str, default='', help="Specify a background color for highlighted lines [0-255]")
     parser.add_argument('-meow', '--meow', action='store_true', help='Cat goes meow')
     args, unknown = parser.parse_known_args()
-    
+
+
     try:
         if '-h' in unknown or '--help' in unknown:
             help_message = capture_help_message(parser)
@@ -425,45 +459,52 @@ def main():
             print(highlighted_help_message)
             sys.exit()
 
-        if args.highlight_lines:
-            lines_to_highlight = parse_line_ranges(args.highlight_lines)
+        if not sys.stdin.isatty() and args.filename:
+            print("Error: Cannot provide both a filename and pipe input to colorcat.", file=sys.stderr)
+            sys.exit(1)
+
+        input_text = None
+        if args.filename:
+            with open(args.filename, 'r') as f:
+                input_text = f.read()
+                #print(f"Processing file: {args.filename} -- meow!")
         else:
-            lines_to_highlight = set()
+            input_text = sys.stdin.read()
+            #print("Processing input from stdin -- meow!")
 
-
-        if args.meow:
-            input_text, filename = read_input(args.filename)
-            if input_text:  
-                new_furball = c_new_furball(input_text)
-                meow(new_furball, random.randint(1, 255))
+        if input_text:
+            
+            if args.meow:
+                new_furball = c_new_furball(input_text)  
+                meow(new_furball, random.randint(1, 255))  
+                return
+            
+            if args.background_color:
+                bg_hl_color = int(args.background_color)
             else:
-                meow(colorcat_furballs, random.randint(1, 255))
-            return 
+                bg_hl_color = 23
 
-        code, filename = read_input(args.filename)
-        if code:
-            lexer = detect_language_type(code, filename, args.language)
-            print_language_detected(lexer)
-            highlighted_code = highlight_with_colorcat_colors(
-                code, filename, args.line_numbers, 
-                lines_to_highlight, args.language
-            )
-            print(highlighted_code)
-        elif sys.stdin.isatty():  
-            meow(colorcat_furballs, random.randint(1, 255))
-            help_message = capture_help_message(parser)
-            highlighted_help_message = apply_syntax_highlighting_to_help(help_message)
-            print(f"\nNo input file was detected.\n {highlighted_help_message}\n")
+            lines_to_highlight = parse_line_ranges(args.highlight_lines) if args.highlight_lines else set()
+
+            lexer = detect_language_type(input_text, args.filename, args.language)
+            print_language_detected(lexer)  # Assuming print_language_detected() is defined elsewhere
+
+            output_format = args.output
+            format_option = 'plaintext' if output_format == 'plain' or output_format == 'plaintext' else 'formatted'
+
+            include_line_numbers = args.line_numbers  # This is True if -ln or --line_numbers is specified by the user
+            
+            if args.only_show_lines:
+                input_text = filter_lines_by_range_with_line_numbers(input_text, args.only_show_lines, include_line_numbers)
+            
+            # Proceed with processing the possibly filtered and line-numbered input_text...
+            highlighted_input = highlight_with_colorcat_colors(input_text, args.filename, args.line_numbers, args.highlight_lines, args.language, args.output, bg_hl_color)
+
+            print(highlighted_input)
+
         else:
-            stdin_text = sys.stdin.read()
-            if args.line_numbers and not (args.highlight_lines or args.language):
-                print_with_line_numbers(stdin_text)
-            else:
-                highlighted_code = highlight_with_colorcat_colors(
-                    stdin_text, None, args.line_numbers, 
-                    lines_to_highlight, args.language
-                )
-                print(highlighted_code)
+            print("No input provided.", file=sys.stderr)
+
     except Exception as e:
         print(f"An error occurred: {e}", file=sys.stderr)
         print(traceback.format_exc(), file=sys.stderr)
