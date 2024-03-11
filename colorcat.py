@@ -138,7 +138,7 @@ class SpecificHighlightFilter(Filter):
         'operators': '\033[38;5;207m',
         'punctuation': '\033[38;5;87m',
         'variables': '\033[38;5;203m',
-        'box_drawing': '\033[38;5;175m', # why is this blinking
+        'box_drawing': '\033[38;5;175m', 
         'reset': '\033[0m'
     }
     def filter(self, _, stream):
