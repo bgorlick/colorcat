@@ -138,6 +138,7 @@ class SpecificHighlightFilter(Filter):
         'operators': '\033[38;5;207m',
         'punctuation': '\033[38;5;87m',
         'variables': '\033[38;5;203m',
+        'box_drawing': '\033[38;5;175m', # why is this blinking
         'reset': '\033[0m'
     }
     def filter(self, _, stream):
@@ -145,6 +146,9 @@ class SpecificHighlightFilter(Filter):
         for ttype, value in stream:
             if value in "[]":
                 yield Token.Text,  SpecificHighlightFilter.meow_colors['bracket_square'] + value + reset_color
+            # handle box drawing characters
+            elif value in "│├└─":
+                yield Token.Text,  SpecificHighlightFilter.meow_colors['box_drawing'] + value + reset_color
             elif value in "{}":
                 yield Token.Text,  SpecificHighlightFilter.meow_colors['curly_braces'] + value + reset_color
             elif value in "()":
