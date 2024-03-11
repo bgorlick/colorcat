@@ -181,7 +181,7 @@ class SpecificHighlightFilter(Filter):
 
 class BackgroundHighlightFilter(Filter):
 
-    default_bg_hl_color = 239 
+    default_bg_hl_color = 232 
 
     def __init__(self, lines_to_highlight, bg_hl_color=None, font_style=None, font_color=None, **options):
         super().__init__(**options)
@@ -217,10 +217,8 @@ class BackgroundHighlightFilter(Filter):
                     line_number += 1 
 
     def apply_styles(self, line):
-        # Apply background color
+
         bg_color_code = f'\033[48;5;{self.bg_hl_color}m' if self.bg_hl_color else ''
-        
-        # Apply font style and color
         font_style_code = self.font_style_mapping(self.font_style) if self.font_style else ''
         font_color_code = self.font_color_mapping(self.font_color) if self.font_color else ''
         
@@ -228,20 +226,32 @@ class BackgroundHighlightFilter(Filter):
 
     @staticmethod
     def font_style_mapping(style):
-        styles = {
-            'bold': '\033[1m',
-        }
+        styles = {'bold': '\033[1m'}
         return styles.get(style, '')
 
     @staticmethod
     def font_color_mapping(color):
-        colors = {
-            'red': '\033[31m',
-        }
+        colors = {'red': '\033[31m'}
         return colors.get(color, '')
 
+class RegexHighlightFilter(Filter):
+    default_bg_hl_color = 232
+    
+    def __init__(self, pattern, bg_hl_color=None, **options):
+        super().__init__(**options)
+        self.pattern = re.compile(pattern)
+        self.bg_hl_color = bg_hl_color or BackgroundHighlightFilter.default_bg_hl_color
+        self.bg_color = f'\033[48;5;{self.bg_hl_color}m'
+        self.reset_color = '\033[0m'
 
-def highlight_with_colorcat_colors(input_text, filename=None, show_line_numbers=False, lines_to_highlight='', language=None, output_format='None', bg_hl_color=None):
+    def filter(self, lexer, stream):
+        for ttype, value in stream:
+            if self.pattern.search(value):
+                yield ttype, f"{self.bg_color}{value}{self.reset_color}"
+            else:
+                yield ttype, value
+
+def highlight_with_colorcat_colors(input_text, filename=None, show_line_numbers=False, lines_to_highlight='', language=None, output_format='None', bg_hl_color=None, regex_pattern=None):
     if isinstance(lines_to_highlight, str):
         highlighted_lines = parse_line_ranges(lines_to_highlight)
     elif isinstance(lines_to_highlight, set):
@@ -249,7 +259,7 @@ def highlight_with_colorcat_colors(input_text, filename=None, show_line_numbers=
     else:
         raise ValueError("lines_to_highlight must be a set or a string.")
     
-    # Adjusting to manage terminal-based "plain" output with background highlighting
+    # manage terminal-based "plain" output with background highlighting
     try:
         lexer = detect_language_type(input_text, filename, language)
     except Exception as e:
@@ -260,10 +270,15 @@ def highlight_with_colorcat_colors(input_text, filename=None, show_line_numbers=
         # we are going to trick the lexer here like this -- we do this because we want plain text without any syntax highlighting, and possibly with background highlighting
         lexer = get_lexer_by_name("text")
         formatter = Terminal256Formatter(linenos=show_line_numbers)  # Only line numbers formatting applied
+        if regex_pattern:
+            if not bg_hl_color:
+                bg_hl_color = 232
+            regex_filter = RegexHighlightFilter(regex_pattern, bg_hl_color)
+            lexer.add_filter(regex_filter)
         if highlighted_lines:
             if not bg_hl_color:
-                bg_hl_color = 23 # change this to change bg color
-            #bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
+                bg_hl_color = 232 # change this to change bg color
+            #bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color 
             lexer.add_filter(BackgroundHighlightFilter(highlighted_lines, bg_hl_color))
             highlighted_input = highlight(input_text, lexer, formatter)
         return highlighted_input
@@ -275,9 +290,14 @@ def highlight_with_colorcat_colors(input_text, filename=None, show_line_numbers=
             base_style_name = 'friendly'
         ExtendedStyle = extend_style(base_style_name)
         formatter = Terminal256Formatter(style=ExtendedStyle, linenos=show_line_numbers)
+        if regex_pattern:
+            if not bg_hl_color:
+                bg_hl_color = 232
+            regex_filter = RegexHighlightFilter(regex_pattern, bg_hl_color)
+            lexer.add_filter(regex_filter)
         if highlighted_lines:
             if not bg_hl_color:
-                bg_hl_color = 239
+                bg_hl_color = 232
             #bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
             lexer.add_filter(BackgroundHighlightFilter(highlighted_lines, bg_hl_color))
 
@@ -288,9 +308,14 @@ def highlight_with_colorcat_colors(input_text, filename=None, show_line_numbers=
             base_style_name = 'friendly'
         ExtendedStyle = extend_style(base_style_name)
         formatter = Terminal256Formatter(style=ExtendedStyle, linenos=show_line_numbers)
+        if regex_pattern:
+            if not bg_hl_color:
+                bg_hl_color = 232
+            regex_filter = RegexHighlightFilter(regex_pattern, bg_hl_color)
+            lexer.add_filter(regex_filter)
         if highlighted_lines:
             if not bg_hl_color:
-                bg_hl_color = 239
+                bg_hl_color = 232
             #bg_hl_color = BackgroundHighlightFilter.default_bg_hl_color
             lexer.add_filter(BackgroundHighlightFilter(highlighted_lines, bg_hl_color))
     
@@ -330,7 +355,7 @@ def print_language_detected(lexer):
     random_color = f'\033[38;5;{random.randint(1, 255)}m'
     reset_color = '\033[0m'
     yellow_color = '\033[38;5;226m'
-    print(f"Language Detected: {yellow_color}[{random_color}{lexer.name}{reset_color}{yellow_color}]{reset_color}")
+    print(f"\nLanguage Detected: {yellow_color}[{random_color}{lexer.name}{reset_color}{yellow_color}]{reset_color}")
 
 colorcat_furballs = [
 "            .';::::::::::::::::::::::::::::::::::::::::::::::::::;,..           ","         .:dOKKKXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXKKOxc'         ","       .ck0KXXNNNNNNXXNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNXKNNNNNNNXXKOo'       ","      'd0KXXNNNNNWKc,;;cd0NWWWWWWWWWWWWWWWWWWWWWWWWWWWXkl;;;;kWNNNNNNXXKk;      ","     .d0KXXNNNNWWWo.:x,.'.:kNMMMMMMMMMMMMMMMMMMMMMMWOl..''od.;XWWNNNNXXXKk,     ","     ;kKXXXNNWWWMWc ;x;'l' .;xXMMMMMMMMMMMMMMMMMMWO:. .c;.do ,KMMWWNNXXXK0l.    ","     ;kKXXXNNWMMMWc :x;';l:;;.;kWWX0OkkxxxkO0KNW0c.,;;cc',do.'0MMMWNNXXKK0l.    ","     ;kKXXXNNWMMMWl ,d;cl;;c:;,.,,.'........'.',..;:c:;cl;lc ;XMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMk..l:';c'c;;c'c;.co;cc,c:lo.'l,::,c,;c';l,.lWMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMNc ;d:.ccc;;c,x:'ldclc;clld,,x:::;ccl';dc.'0MMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMM0,.locc'l,:c.;l';c.cl,c,:l'c:.;c'l;:llo'.xWMMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMMWo.ccloc;.'::.:c;:.cc,c,;ccc.,c,.'colcl';XMMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMWk..:ccol,lo.:;::;:.cc,c,;cc:,c'cd,:dccc'.lNMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMK,.::,co;.;:...,,,;,c;.c:;;;,.. ,c.'ll,;c'.xMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMd.,' 'lo:''.   '..:ol. :dc'..   .,,;lo;..;.;XMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMWc.;c,ox; ;o.  .oo.:o,...ll.,c   .dx..dx;;c.'0MMMWNNXXXKOl.    ","     ;kKXXXNNWMMMWl.::.cxdc;lc'.,oc..:c'';l'.,oc'.;lc;oxo',c.,KMMMWNNXXXKOl.    ","     ;kKXXNNNWMMMMx.':,,;;coccc:c'.,:,cc,c;;:..:c:cllc;;,,:;.lWMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMNl.,c,.;oxko:::c;';;cl;c:;,,::::cxxdc..c:.;KMMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMMXl',:::c::::cld0O,.:olc..d0xlc::::cc::;':0MMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMMMWx..col:,:lclkWWO:....,xNM0ocl:,:cll..lNMMMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMMMM0,;xl;;;;;:okXMMNo. ;XMMW0dc;;;;,cxc'xMMMMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMMMWx..lc.;,'c:,,:colcclclol:;':l,';';o' cNMMMMMMWNNXXXKOl.    ","     ;OKXXXNNWMMMMMM0'':okclccc;';;.:x0NNXkl.,:';:cclcxdc'.dWMMMMMWNNXXXKOl.    ","     ;OKXXXNNWMMMMMK;.,,,ccccc,;'.:;'.,;,;..,c'.;,clccl;,,..kWMMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMNc.''';:cod'.cl..cl;:c,:;:l'.:l..ldcc:,''.,0MMMMWNNXXXX0l.    ","     ;kKXXXNNWMMMMk.'oc::;:l;':o::::l::c,::cc:c:lc',c:;::co;.lWMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMWc :ko:dk:.'c:;.:l;;;l;.cc,;cl.':c: 'xkccko.,KMMMWNNXXXKOl.    ","     ;OKXXXNNWMMMWc :l.,kd'.clcxcl:.;c:;,;cc.,lcdocl'.ckc.cl.'0MMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMd';'.;;'''cc;d;c;.l,;ddc'l;'l;oc;l,'',;,.;'cNMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMXl.'ko:;ccc:...:l.:c'',':c':l...,lcc:;lk:.;0MMMMWNNXXXK0l.    ","     ;kKXXXNNWWMMMMNo.;,;ccdoo,;d:''.:l;'cc'.';oc,codlc:,:':KMMMMMWNNXXXK0l.    ","     ,xKXXXNNWWWMMMMW0l..':oco,.';':dclc;clol',,..lllc,..:kNMMMMMWWNNXXXKOc.    ","     .lOKXXNNNNWWWMMMMWKxc;..,...::...cc,c,..;c.. ''.,:o0WMMMMWWWNNNNXXKKx'     ","      .lOKXXNNNNNNNNNNNNNNXOxl:;','....'......,',:cokKNNNNNNNNNNNNNNNXK0d'      ","        ,dOKXXXXXNNNXXNNNNNNNNNNK0OkxdddddddxkOKXNNNNNNNNNNNNNNNNNXXK0x:.       ","         .,cdk00KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK000KKK0Oxl;.         ","             ..'''''''''''''''''''''''''''''''''''''''''''''''''''.             ","             Colorcat by Ben Gorlick (github: bgorlick) (c) 2024 | MIT     \n",
@@ -449,6 +474,7 @@ def main():
     parser.add_argument('-ln', '--line-numbers', action='store_true', help='Display line numbers')
     parser.add_argument('-hln', '--highlight-lines', type=str, default='', help='Highlight specific lines')
     parser.add_argument('-lang', '-l', '--language', type=str, help='Explicitly specify the programming language')
+    parser.add_argument('-regex', '--regex-pattern', type=str, default='', help='Regex pattern to highlight matching lines')
     parser.add_argument("-o", "--output", help="Output formatting option. Can be 'formatted' or 'plain'.", default='formatted')
     parser.add_argument('-oln', '--only-show-lines', type=str, default='', help="Only show specific lines")
     parser.add_argument('-bgcolor', '--background-color', type=str, default='', help="Specify a background color for highlighted lines [0-255]")
@@ -471,10 +497,8 @@ def main():
         if args.filename:
             with open(args.filename, 'r') as f:
                 input_text = f.read()
-                #print(f"Processing file: {args.filename} -- meow!")
         else:
             input_text = sys.stdin.read()
-            #print("Processing input from stdin -- meow!")
 
         if input_text:
             
@@ -486,25 +510,30 @@ def main():
             if args.background_color:
                 bg_hl_color = int(args.background_color)
             else:
-                bg_hl_color = 23
+                bg_hl_color = 232
+
+            if args.regex_pattern:
+                regex_pattern = args.regex_pattern
+            else:
+                regex_pattern = None
 
             lines_to_highlight = parse_line_ranges(args.highlight_lines) if args.highlight_lines else set()
 
             lexer = detect_language_type(input_text, args.filename, args.language)
-            print_language_detected(lexer)  # Assuming print_language_detected() is defined elsewhere
+            print_language_detected(lexer)  
 
             output_format = args.output
             format_option = 'plaintext' if output_format == 'plain' or output_format == 'plaintext' else 'formatted'
 
-            include_line_numbers = args.line_numbers  # This is True if -ln or --line_numbers is specified by the user
+            include_line_numbers = args.line_numbers  # if -ln or --line_numbers is specified by the user
             
             if args.only_show_lines:
                 input_text = filter_lines_by_range_with_line_numbers(input_text, args.only_show_lines, include_line_numbers)
             
-            # Proceed with processing the possibly filtered and line-numbered input_text...
-            highlighted_input = highlight_with_colorcat_colors(input_text, args.filename, args.line_numbers, args.highlight_lines, args.language, args.output, bg_hl_color)
+            highlighted_input = highlight_with_colorcat_colors(input_text, args.filename, args.line_numbers, args.highlight_lines, args.language, args.output, bg_hl_color, regex_pattern)
 
-            print(highlighted_input)
+            # always print a new line before the highlighted input
+            print(f"{highlighted_input}")
 
         else:
             print("No input provided.", file=sys.stderr)
@@ -521,9 +550,7 @@ def print_with_line_numbers(input_text):
 if __name__ == "__main__":
     signal.signal(signal.SIGPIPE, signal.SIG_IGN)
     main()
-#    sys.stdout.write("\x1b[?7h")
-    sys.stdout.flush()
-    sys.stderr.flush()
+#   sys.stdout.write("\x1b[?7h")
     sys.stdout.flush()
     sys.stderr.flush()
     sys.exit(0)
