@@ -3,7 +3,7 @@
 # Colorcat - A powerful yet simple syntax highlighter for the terminal viewing of files.
 # (c) 2024 - Ben Gorlick | MIT License | Attribution to the original author is required - free to use, modify, and distribute.
 # Colorcat enhances viewing of file contents in the terminal by colorizing syntax.
-# Version: 0.0.0.3
+# Version: 0.0.0.4
 
 # At times neither cat, nor bat are make seperating concerns when viewing dense files easy.  This is where colorcat comes in. 
 # Colorcat is a simplified syntax highlighter for terminal use, utilizing Python's pygmentize.
@@ -15,11 +15,32 @@
 
 # Pygments can apply the 256-color terminal formatter and also map colors to use the 8 default ANSI colors. 
 # Those are: ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'].
-# Usage: colorcat.py [filename] [-ln] [-hln]
-#   filename: The file to be highlighted
-#   -ln, --line-numbers: Display line numbers
-#   -hln, --highlight-lines: Highlight lines with a grey background, separated by commas (e.g., "10,30")
-#   -m, --meow: Make the cat go meow
+
+# usage: colorcat.py [-ln] [-hln HIGHLIGHT_LINES] [-lang LANGUAGE] [-regex REGEX_PATTERN] [-o OUTPUT] [-oln ONLY_SHOW_LINES] [-bgcolor BACKGROUND_COLOR] [-meow] [-h]
+#                    [filename]
+
+# ColorCat: Enhanced source code highlighting.
+
+# positional arguments:
+#   filename              The file to be highlighted
+
+# options:
+#   -ln, --line-numbers   Display line numbers
+#   -hln HIGHLIGHT_LINES, --highlight-lines HIGHLIGHT_LINES
+#                         Highlight specific lines
+#   -lang LANGUAGE, -l LANGUAGE, --language LANGUAGE
+#                         Explicitly specify the programming language
+#   -regex REGEX_PATTERN, --regex-pattern REGEX_PATTERN
+#                         Regex pattern to highlight matching lines
+#   -o OUTPUT, --output OUTPUT
+#                         Output formatting option. Can be 'formatted' or 'plain'.
+#   -oln ONLY_SHOW_LINES, --only-show-lines ONLY_SHOW_LINES
+#                         Only show specific lines
+#   -bgcolor BACKGROUND_COLOR, --background-color BACKGROUND_COLOR
+#                         Specify a background color for highlighted lines [0-255]
+#   -meow, --meow         Cat goes meow
+#   -h, --help            Custom help message
+
 
 # If you want to highlight specific lines in a file you can do so like this (eg. highlighting lines 279 and 281)
 # python colorcat.py -hln 279,281 /path/to/file.py
@@ -53,12 +74,22 @@ import random
 import signal
 import itertools
 import random
+import re
 
 
 
 sys.stdout.write("\x1b[?7l")
 
-# added this for illustrative purposes, to show how to create a custom style and extend an existing one
+class AugmentedHelpAction(argparse.Action):
+    def __init__(self, option_strings, dest, **kwargs):
+        super().__init__(option_strings=option_strings, dest=dest, nargs=0, **kwargs)
+    def __call__(self, parser, namespace, values, option_string=None):
+        help_message = capture_help_message(parser)
+        highlighted_message = apply_syntax_highlighting_to_help(help_message)
+        print(highlighted_message)
+        parser.exit()
+
+# added this for illustrative purposes, custom style and extend an existing one (this is useful for templates / themes which will be coming soon :)
 class CustomStyle(Style):
     default_style = ""
     styles_for_light_text = {
@@ -383,7 +414,6 @@ def meow(colorcat=None, s_col=1):
         grad_meow.append(grad_l)
     for furball in grad_meow:
         print(furball)
-    print("\n")
 
 def c_new_furball(input_text):
     let_to_p = ["k", "K", "0", "X", "N", "W", "M", "c", "d", "l", "x", "o", "O"]
@@ -433,7 +463,12 @@ def apply_syntax_highlighting_to_help(help_message):
         '(': colors['parens'],
         ')': colors['parens']
     }
-    highlighted_message = "".join(symbol_colors.get(symbols, colors['strings']) + symbols + colors['reset'] for symbols in help_message)
+    highlighted_message = ""
+    for char in help_message:
+        if char in symbol_colors:
+            highlighted_message += f"{symbol_colors[char]}{char}{colors['reset']}"
+        else:
+            highlighted_message += f"{colors['strings']}{char}{colors['reset']}"
     return highlighted_message
 
 
@@ -468,8 +503,8 @@ def offset_color(offset_args: str, config: dict) -> dict:
     
 
 def main():
-    # could we apply a bg highlight using c  directly on the word highlighting in the help message? 
-    parser = argparse.ArgumentParser(description='ColorCat: Enhanced \033[48;5;189mcat\033[0m with syntax highlighting')
+    parser = argparse.ArgumentParser(description='ColorCat: Enhanced source code highlighting.',
+                                     add_help=False)  
     parser.add_argument('filename', type=str, nargs='?', default=None, help='The file to be highlighted')
     parser.add_argument('-ln', '--line-numbers', action='store_true', help='Display line numbers')
     parser.add_argument('-hln', '--highlight-lines', type=str, default='', help='Highlight specific lines')
@@ -479,26 +514,35 @@ def main():
     parser.add_argument('-oln', '--only-show-lines', type=str, default='', help="Only show specific lines")
     parser.add_argument('-bgcolor', '--background-color', type=str, default='', help="Specify a background color for highlighted lines [0-255]")
     parser.add_argument('-meow', '--meow', action='store_true', help='Cat goes meow')
-    args, unknown = parser.parse_known_args()
+    parser.add_argument('-h', '--help', action=AugmentedHelpAction, help='Custom help message')
 
+    args = parser.parse_args()
 
     try:
-        if '-h' in unknown or '--help' in unknown:
-            help_message = capture_help_message(parser)
-            highlighted_help_message = apply_syntax_highlighting_to_help(help_message)
-            print(highlighted_help_message)
-            sys.exit()
-
         if not sys.stdin.isatty() and args.filename:
             print("Error: Cannot provide both a filename and pipe input to colorcat.", file=sys.stderr)
             sys.exit(1)
 
         input_text = None
         if args.filename:
-            with open(args.filename, 'r') as f:
-                input_text = f.read()
-        else:
+            try:
+                with open(args.filename, 'r') as f:
+                    input_text = f.read()
+            except FileNotFoundError:
+                print(f"Error: File '{args.filename}' not found.", file=sys.stderr)
+                sys.exit(1)
+
+        # If no filename was provided or file not found, check for piped input.
+        if not input_text and not sys.stdin.isatty():
             input_text = sys.stdin.read()
+        if not input_text and not args.meow and not args.help:
+            meow(colorcat_furballs, random.randint(1, 255))
+            help_message = capture_help_message(parser)
+            highlighted_help_message = apply_syntax_highlighting_to_help(help_message)
+            #sleep for 1 second before the print
+            import time
+            #print(f"                       No input was detected... meow...\n{highlighted_help_message}\n")
+            sys.exit()
 
         if input_text:
             
@@ -535,6 +579,13 @@ def main():
             # always print a new line before the highlighted input
             print(f"{highlighted_input}")
 
+        
+        elif not sys.stdin.isatty() and not args.filename and not args.meow and not args.help and not sys.stderr.isatty():
+            meow(colorcat_furballs, random.randint(1, 255))
+            help_message = capture_help_message(parser)
+            highlighted_help_message = apply_syntax_highlighting_to_help(help_message)
+            print(f"\nNo input file was detected.\n {highlighted_help_message}\n")
+
         else:
             print("No input provided.", file=sys.stderr)
 
@@ -551,6 +602,8 @@ if __name__ == "__main__":
     signal.signal(signal.SIGPIPE, signal.SIG_IGN)
     main()
 #   sys.stdout.write("\x1b[?7h")
+    sys.stdout.flush()
+    sys.stderr.flush()
     sys.stdout.flush()
     sys.stderr.flush()
     sys.exit(0)
