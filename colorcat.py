@@ -587,7 +587,11 @@ def main():
             print(f"\nNo input file was detected.\n {highlighted_help_message}\n")
 
         else:
-            print("No input provided.", file=sys.stderr)
+            if args.meow:
+                meow(colorcat_furballs, random.randint(1, 255))
+                print("If you provide an input file with --meow, I can meow it for you.", file=sys.stderr)
+            else:
+                print("No input provided.", file=sys.stderr)
 
     except Exception as e:
         print(f"An error occurred: {e}", file=sys.stderr)
