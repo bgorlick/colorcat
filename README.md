@@ -5,6 +5,8 @@ ColorCat: Enhanced Syntax Highlighting for the Terminal, Code, Standard Input an
 
 ![image](https://github.com/bgorlick/colorcat/assets/5460972/5ea2e5c2-5046-4b1e-a3db-bb82a9769082)
 
+![image](https://github.com/bgorlick/colorcat/assets/5460972/7e61dbb7-c1a2-408f-bac7-e661a6952826)
+
 ### What Is Colorcat?
 ColorCat is an innovative command-line tool designed to bring vibrant, context-aware syntax highlighting to your terminal, making it easier to read and understand code. Unlike traditional utilities like cat or bat, ColorCat leverages the powerful Pygments library to offer a wide range of language support and customization options, ensuring your code is not just displayed but brought to life with color.
 
@@ -47,7 +49,7 @@ options:
   -meow, --meow         Cat goes meow
   -h, --help            Custom help message
 ```
-![image](https://github.com/bgorlick/colorcat/assets/5460972/7e61dbb7-c1a2-408f-bac7-e661a6952826)
+
 
 Whether you're reviewing dense code bases, debugging, or simply prefer to work within the terminal, ColorCat enhances your experience by making code easier to read and understand. It's the perfect tool for developers, system administrators, and anyone who appreciates the power and simplicity of the command line.
 
