@@ -11,6 +11,8 @@
 # The idea is to enable a user to create a theme, and then apply offsets to the theme to create a new theme. 
 # This supports rapidly creating new themes, and also allows for the user to create a theme that is a 'child' of another theme, and then apply offsets to the child theme to create a new theme.
 
+# import defaultdict
+from collections import defaultdict
 import os, sys
 import yaml
 import argparse
@@ -22,70 +24,145 @@ import io
 
 
 
-def capture_help_message(parser):
-    help_message = ""
-    with io.StringIO() as help_message:
-         parser.print_help(file=help_message)
-         help_message = help_message.getvalue()
-         return help_message
+meow_color_map = {
+    'reset': {
+        # these shouldnt be fg or bg colors, but we can use them to highlight escape sequences
+        'fg_color': '\033[0m',
+        'bg_color': '\033[0m',
+    },
+    'curly_braces': {
+        'fg_color': '\033[38;5;1m',
+        'bg_color': '\033[48;5;1m',
+        'chars': ['{', '}']
+    },
+    'parens': {
+        'fg_color': '\033[38;5;163m',
+        'bg_color': '\033[48;5;163m',
+        'chars': ['(', ')']
+    },
+    'bracket_square': {
+        'fg_color': '\033[38;5;202m',
+        'bg_color': '\033[48;5;202m',
+        'chars': ['[', ']']
+    },
+    'pacman_greaterthan_lessthan': {
+        'fg_color': '\033[38;5;201m',
+        'bg_color': '\033[48;5;201m',
+        'chars': ['<', '>']
+    },
+    'single_quote': {
+        'fg_color': '\033[38;5;11m',
+        'bg_color': '\033[48;5;11m',
+        'chars': ["'"]
+    },
+    'double_quote': {
+        'fg_color': '\033[38;5;51m',
+        'bg_color': '\033[48;5;51m',
+        'chars': ['"']
+    },
+    'smart_quote': {
+        'fg_color': '\033[38;5;84m',
+        'bg_color': '\033[48;5;84m',
+        'chars': ['“', '”']
+    },
+    'curly_quote': {
+        'fg_color': '\033[38;5;86m',
+        'bg_color': '\033[48;5;86m',
+        'chars': ['‘', '’']
+    },
+    'double_low_9_quotation_mark': {
+        'fg_color': '\033[38;5;121m',
+        'bg_color': '\033[48;5;121m',
+        'chars': ['„', '‟']
+    },
+    'multi_line_comment': {
+        'fg_color': '\033[38;5;32m',
+        'bg_color': '\033[48;5;32m',
+        'chars': ['/*', '*/']
+    },
+    'single_line_comment': {
+        'fg_color': '\033[38;5;36m',
+        'bg_color': '\033[48;5;36m',
+        'chars': ['//']
+    },
+    'backtick': {
+        'fg_color': '\033[38;5;47m',
+        'bg_color': '\033[48;5;47m',
+        'chars': ['`']
+    },
+    'comma': {
+        'fg_color': '\033[38;5;112m',
+        'bg_color': '\033[48;5;112m',
+        'chars': [',']
+    },
+    'colon': {
+        'fg_color': '\033[38;5;172m',
+        'bg_color': '\033[48;5;172m',
+        'chars': [':']
+    },
+    'semicolon': {
+        'fg_color': '\033[38;5;79m',
+        'bg_color': '\033[48;5;79m',
+        'chars': [';']
+    },
+    'period': {
+        'fg_color': '\033[38;5;184m',
+        'bg_color': '\033[48;5;184m',
+        'chars': ['.']
+    },
+    'ellipsis': {
+        'fg_color': '\033[38;5;186m',
+        'bg_color': '\033[48;5;186m',
+        'chars': ['...']
+    },
+    'exclamation': {
+        'fg_color': '\033[38;5;155m',
+        'bg_color': '\033[48;5;155m',
+        'chars': ['!']
+    },
+    'question': {
+        'fg_color': '\033[38;5;87m',
+        'bg_color': '\033[48;5;87m',
+        'chars': ['?']
+    },
+}
+# we should just use the argsparse augment to get the help message
+# define an AugmentParser class that inherits from argparse.ArgumentParser
+# and then override the print_help method to capture the help message
+class AugmentParser(argparse.ArgumentParser):
+    def print_help(self, file=None):
+        help_message = super().print_help(file)
+        return help_message
+
+
+    def capture_help_message(parser):
+        help_message = io.StringIO()
+        parser.print_help(help_message) # capture the help message into the StringIO object
+        help_message = help_message.getvalue() # get the value of the StringIO object
+        return help_message
     
 
-def apply_syntax_highlighting_to_help(help_message):
-    colors = {
-        'escape_sequence': '\033[38;5;93m',
-        'curly_braces': '\033[38;5;1m',
-        'parens': '\033[38;5;163m',
-        'bracket_square': '\033[38;5;202m',
-        'pacman_greaterthan_lessthan': '\033[38;5;201m',
-        'single_quote': '\033[38;5;11m',
-        'double_quote': '\033[38;5;51m',
-        'smart_quote': '\033[38;5;84m',
-        'curly_quote': '\033[38;5;86m',
-        'double_low_9_quotation_mark': '\033[38;5;121m',
-        'multi_line_comment': '\033[38;5;32m',
-        'single_line_comment': '\033[38;5;36m',
-        'backtick': '\033[38;5;47m',
-        'comma': '\033[38;5;112m',
-        'colon': '\033[38;5;172m',
-        'semicolon': '\033[38;5;79m',
-        'period': '\033[38;5;184m',
-        'ellipsis': '\033[38;5;186m',
-        'exclamation': '\033[38;5;155m',
-        'question': '\033[38;5;87m',
-    }
-    symbol_colors = {
-        '{': 'curly_braces',
-        '}': 'curly_braces',
-        '(': 'parens',
-        ')': 'parens',
-        '[': 'bracket_square',
-        ']': 'bracket_square',
-        '<': 'pacman_greaterthan_lessthan',
-        '>': 'pacman_greaterthan_lessthan',
-        "'": 'single_quote',
-        '"': 'double_quote',
-        '‘': 'smart_quote',
-        '“': 'double_low_9_quotation_mark',
-        '`': 'backtick',
-        ',': 'comma',
-        ':': 'colon',
-        ';': 'semicolon',
-        '.': 'period',
-        '...': 'ellipsis',
-        '!': 'exclamation',
-        '?': 'question',
-        
-    }
-    highlighted_message = ""
-    for char in help_message:
-        if char in symbol_colors:
-            highlighted_message += f"{symbol_colors[char]}{char}{colors['reset']}"
-        else:
-            highlighted_message += f"{colors['strings']}{char}{colors['reset']}"
-    return highlighted_message
+# now we want to use meow_color_map to apply syntax highlighting to the help message
+    def apply_syntax_highlighting_to_help(help_message):
+        for key, value in meow_color_map.items():
+            for char in value['chars']:
+                help_message = help_message.replace(char, f"{value['fg_color']}{char}{value['bg_color']}")
+        return help_message
 
 
-sample_config = {'colorcat_root_dir': str(Path.home() / '.config/colorcat'), 'default_bg_hl_color': 239, 'color_upper_bound': 255, 'meow_colors': {'escape_sequence': 93, 'curly_braces': 1, 'parens': 163, 'bracket_square': 202, 'pacman_greaterthan_lessthan': 201, 'single_quote': 11, 'double_quote': 51, 'smart_quote': 84, 'curly_quote': 86, 'right_single_quotation_mark': 123, 'double_low_9_quotation_mark': 121, 'multi_line_comment': 32, 'single_line_comment': 36, 'backtick': 47, 'comma': 112, 'colon': 172, 'semicolon': 79, 'period': 184, 'ellipsis': 186, 'exclamation': 155, 'question': 87, 'strings': 81, 'function_names': 189, 'conditionals': 209, 'builtin_functions': 181, 'numbers': 11, 'operators': 207, 'punctuation': 87, 'variables': 203}, 'offset_settings': {'default_fg_offset': 0, 'default_bg_offset': 0, 'highlight_intensity': 5}, 'script_configs': {'line_numbering': False, 'theme_name': 'default', 'themes_dir': 'themes/', 'autogen_themes_directory': 'autogen-themes/', 'autogen_themes': True}}
+sample_config = {
+    'colorcat_root_dir': str(Path.home() / '.config/colorcat'), 
+    'default_bg_hl_color': 239, 'color_upper_bound': 255, 
+# use update method to merge the meow_color_map dictionary into the sample_config dictionary
+    'meow_colors': meow_color_map,
+    'offset_settings': {
+        'default_fg_offset': 0, 'default_bg_offset': 0, 'highlight_intensity': 5
+    }, 
+    'script_configs': {
+        'line_numbering': False, 'theme_name': 'default', 'themes_dir': 'themes/', 
+        'autogen_themes_directory': 'autogen-themes/', 'autogen_themes': True
+    }
+}
 
 def validate_and_backup_config(config_path):
     """Validate config keys and create a backup if necessary before returning the loaded config."""
@@ -272,26 +349,98 @@ def clean_directory(directory):
             item.unlink() 
     print(f"{default}Directory {light_purple}{directory}{default} has been {pink}cleaned recursively.{reset}")
 
+# TODO: This is just the foundation for this feature, it's not fully implemented yet
+def offset_color(offset_args: str, config: dict) -> dict:
+    """
+    Adjusts color values based on user-defined offsets.
+    Supports global, foreground, and background offsetting with wrapping.
+    """
+    def parse_offset_args(offset_args):
+        pattern = r"(all|\w+)\s*(\d+)?,?\s*(\d+)?"
+        matches = re.finditer(pattern, offset_args, re.IGNORECASE)
+        offsets = defaultdict(lambda: {'fg': 0, 'bg': 0})
+        for match in matches:
+            key, fg_offset, bg_offset = match.groups()
+            if fg_offset:
+                offsets[key]['fg'] = int(fg_offset)
+            if bg_offset:
+                offsets[key]['bg'] = int(bg_offset)
+        return offsets
+
+    def wrap_color_value(value, offset, max_value=255):
+        return (value + offset) % max_value
+
+    def apply_offsets_to_config(config, offsets):
+        # Apply the calculated offsets to the provided configuration dict
+        for category, color_codes in config['meow_colors'].items():
+            if category in offsets or 'all' in offsets:
+                fg_offset = offsets.get(category, offsets['all'])['fg']
+                bg_offset = offsets.get(category, offsets['all'])['bg']
+                # Assumes color codes are stored as integers in the config
+                if 'fg' in color_codes:
+                    color_codes['fg'] = wrap_color_value(color_codes.get('fg', 0), fg_offset)
+                if 'bg' in color_codes:
+                    color_codes['bg'] = wrap_color_value(color_codes.get('bg', 0), bg_offset)
+        return config
+
+    offsets = parse_offset_args(offset_args)
+    updated_config = apply_offsets_to_config(config.copy(), offsets)
+    return updated_config
+
+def print_color_block(fg_color, bg_color, text):
+    return f'\x1b[38;5;{fg_color}m\x1b[48;5;{bg_color}m{text}\x1b[0m'
+
+def draw_ascii_color_grid():
+    print("Standard colors 0-15:")
+    for color in range(0, 16):
+        fg_color = 15 if color < 6 else 0
+        print(print_color_block(fg_color, color, f"  {str(color).ljust(3)}"), end=' ')
+    print("\n")
+    print("Colors 16-231:")
+    fg_color = 15
+    for color in range(16, 232):
+        if (color - 16) % 36 == 0:
+            fg_color = 15  
+        elif (color - 16) % 2 == 0:
+            fg_color -= 1  
+            fg_color = max(fg_color, 232)  
+        print(print_color_block(fg_color, color, f" {str(color).ljust(3)}"), end='')
+        if (color - 15) % 36 == 0:
+            print()  
+    print() 
+    print("Grayscale colors 232-255:")
+    for color in range(232, 256):
+        fg_color = 256-8 if color < 236 else 16
+        print(print_color_block(fg_color, color, f" {str(color).ljust(3)} "), end='')
+    print() 
+
 def main():
-    parser = argparse.ArgumentParser(description='Manage ColorCat configurations.')
-    parser.add_argument('--colorcat_dir', type=str, default=str(Path.home() / '.config/colorcat/'), help='The directory where the config file is located')
-    parser.add_argument('--config_file', type=str, default='colorcat.config.yaml', help='The name of the config file')
-    parser.add_argument('--clean', action='store_true', help='Clean out all themes, configs, etc., from the specified colorcat_dir.')
-    parser.add_argument('--purge', action='store_true', help='Prompt for confirmation before permanently deleting the specified colorcat_dir or its default.')
-    parser.add_argument('--show-config', action='store_true', help='Show the current configuration settings.')  
+    parser = AugmentParser(description='Colorcat configuration manager', formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument('-c', '--colors', action='store_true', help='Display an ASCII color grid')
+    parser.add_argument('-s', '--show-config', action='store_true', help='Display the current configuration')
+    parser.add_argument('-p', '--purge', action='store_true', help='Purge the colorcat directory')
+    parser.add_argument('-C', '--clean', action='store_true', help='Clean the colorcat directory')
+    parser.add_argument('-d', '--colorcat-dir', default=str(Path.home() / '.config/colorcat'), help='The directory where colorcat configuration is stored')
+    parser.add_argument('-f', '--config-file', default='colorcat.yaml', help='The name of the colorcat configuration file')
     args, unknown = parser.parse_known_args()
-    
+
+
     default = '\033[38;5;81m'
     reset = '\033[0m'
     brackets = '\033[38;5;202m'
     semicolon = '\033[38;5;79m'
     slash = '\033[38;5;192m'
-    period = '\033[38;5;184m'
+
+    config = None
 
     try:
         if '-h' in unknown or '--help' in unknown:
-            help_message = capture_help_message(parser)
-            print(apply_syntax_highlighting_to_help(help_message))
+            help_message = parser.capture_help_message()
+            print(parser.apply_syntax_highlighting_to_help(help_message))
+            sys.exit(0)
+
+        if args.colors:
+            draw_ascii_color_grid()
             sys.exit(0)
 
         if args.show_config:
@@ -300,14 +449,10 @@ def main():
             print_colorcat(f"Themes directory: {get_full_path(config, 'themes_dir')}", config)
             print_colorcat(f"Autogen themes directory: {get_full_path(config, 'autogen_themes_directory')}", config)
             print_colorcat(json.dumps(config, indent=4))
-
             sys.exit(0)
+
         if args.clean:
             clean_directory(args.colorcat_dir)
-        elif args.purge:
-            print(f"Prompt for confirmation before permanently deleting {args.colorcat_dir} or its default.")
-        else:
-            print("No action specified. Please provide either --clean or --purge.")
 
         if args.purge:
             if args.colorcat_dir == str(Path.home() / '.config/colorcat/') and not Path(args.colorcat_dir).exists():
@@ -319,7 +464,6 @@ def main():
                 else:
                     meow(colorcat_furballs, random.randint(1, 255))
                     print(f"\n{default}                For meow... no new sample config shall be created.{reset}\n")
-                    #exit
                     sys.exit(0)
             else:
                 purge_directory(args.colorcat_dir)
