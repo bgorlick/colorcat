@@ -3,6 +3,7 @@
 # Filename: colorcat-config-wip.py (work in progress)
 # Colorcat - A powerful yet simple syntax highlighter for the terminal viewing of files.
 # (c) 2024 - Ben Gorlick | MIT License | Attribution to the original author is required - free to use, modify, and distribute.
+# V 0.0.0.5
 
 # Initial colorcat framework that will get merged into colorcat.py -- it's a work in progress.
 # The idea here is to migrate the configuration and management of the configuration to YAML (colorcat currently is hard-coded w/ a JSON style color config)
@@ -84,15 +85,15 @@ class ColorCatThemes:
             self.colorcat_current_theme_config = self.get_default_theme_config()
             self.create_default_theme_config_file()
 
-    def load_theme_config(self):
+    def load_theme_config(self, theme_name):
         """Load the theme configuration from a YAML file."""
-        theme_path = self.themes_dir_path / f"{self.theme_name}.yaml"
+        theme_path = self.themes_dir_path / f"{theme_name}.yaml"
         if theme_path.exists():
             with open(theme_path, 'r') as file:
-                print(f"Theme '{self.theme_name}' loaded successfully from {theme_path}")
+                print(f"Theme '{theme_name}' loaded successfully from {theme_path}")
                 return yaml.safe_load(file)
         else:
-            print(f"Theme '{self.theme_name}' not found, using default theme configuration.")
+            print(f"Theme '{theme_name}' not found, using default theme configuration.")
             return self.get_default_theme_config()
 
     def save_theme_config_file(self, theme_name):
@@ -102,39 +103,56 @@ class ColorCatThemes:
             return
 
         theme_dir = self.colorcat_root_dir / self.themes_dir
-        theme_dir.mkdir(parents=True, exist_ok=True)  
-
+        theme_dir.mkdir(parents=True, exist_ok=True)
         theme_path = theme_dir / f"{theme_name}.yaml"
+
+        # Print the configuration that will be saved for verification
+        print(f"Saving the following configuration for theme '{theme_name}':")
+        yaml.dump(self.colorcat_current_theme_config, sys.stdout, default_flow_style=False)
 
         with open(theme_path, 'w') as file:
             yaml.dump(self.colorcat_current_theme_config, file, default_flow_style=False)
         print(f"Theme '{theme_name}' saved successfully at {theme_path}")
-
-    def apply_modifications(self, modifications_str):
-        """Applies modifications to the current theme configuration based on a string of key=value pairs."""
-        modifications = shlex.split(modifications_str)
-        for modification in modifications:
-            key, value = modification.split('=')
-            # Navigate nested dictionaries
-            dict_ref = self.colorcat_current_theme_config
-            path_parts = key.split('.')
-            for part in path_parts[:-1]:  
-                if part not in dict_ref:
-                    print(f"Key '{part}' not found in the configuration. Modification skipped.")
-                    break
-                dict_ref = dict_ref[part]
             
-            if path_parts[-1] in dict_ref:
-                if isinstance(dict_ref[path_parts[-1]], str):
-                    dict_ref[path_parts[-1]] = value
-                elif isinstance(dict_ref[path_parts[-1]], list):
-                    dict_ref[path_parts[-1]] = value.split(',')
+    def apply_modifications(self, theme_name, modifications_str):
+        """Applies modifications to the specified theme configuration based on a string of key=value pairs."""
+        # Load the current theme configuration.
+        self.colorcat_current_theme_config = self.load_theme_config(theme_name)
+        
+        # Parse the modifications.
+        modifications = re.split(r',(?![^\[]*\])', modifications_str)
+        
+        # Apply each modification.
+        for modification in modifications:
+            try:
+                key, value = modification.split('=', 1)
+                
+                # If the value is a list, safely evaluate it; otherwise, handle escape sequences.
+                if value.startswith("[") and value.endswith("]"):
+                    value = json.loads(value.replace("'", '"'))
                 else:
-                    print(f"Unsupported modification for '{key}'.")
-            else:
-                print(f"Key '{path_parts[-1]}' not found in the configuration. Modification skipped.")
+                    value = bytes(value, "utf-8").decode("unicode_escape")
 
-        print("Modifications applied successfully.")
+                # Access the 'color_settings' dictionary before modifying the color keys.
+                dict_ref = self.colorcat_current_theme_config['color_settings']
+
+                # Split the key and traverse the dictionary to the correct key.
+                path_parts = key.split('.')
+                for part in path_parts[:-1]:
+                    dict_ref = dict_ref.setdefault(part, {})
+                dict_ref[path_parts[-1]] = value
+
+                # Print out the modification.
+                print(f"Applied modification - {key}: {value}")
+            except ValueError as e:
+                print(f"Invalid modification format: {modification}. Error: {e}")
+                continue
+
+        # Save the modifications to the file after all modifications have been applied.
+        self.save_theme_config_file(theme_name)
+        print(f"All modifications applied and saved for theme '{theme_name}'")
+
+
 
     def show_theme_config(self, theme_name=None):
         """Displays the full YAML data of the specified or current theme and shows a sample of the colors."""
@@ -161,7 +179,7 @@ class ColorCatThemes:
             color_samples = [
             (setting_name, ''.join(setting_values['chars']) or 'Abc')
             for setting_name, setting_values in theme_config['color_settings'].items()
-            if setting_name != 'reset'  # Skip 'reset' setting
+            if setting_name != 'reset'  # skip 'reset' setting as it has no color
             ]
             max_name_length = max(len(name) for name, _ in color_samples) + 2  # plus 2 for ": "
             max_sample_length = max(len(sample) for _, sample in color_samples)
@@ -504,43 +522,41 @@ class ColorCatThemes:
         else:
             print("No theme files found to clean.")
 
-    
-    # TODO: This is just the foundation for this feature, it's not fully implemented yet
-    def offset_color(offset_args: str, config: dict) -> dict:
-        """
-        Adjusts color values based on user-defined offsets.
-        Supports global, foreground, and background offsetting with wrapping.
-        """
-        def parse_offset_args(offset_args):
-            pattern = r"(all|\w+)\s*(\d+)?,?\s*(\d+)?"
-            matches = re.finditer(pattern, offset_args, re.IGNORECASE)
-            offsets = defaultdict(lambda: {'fg': 0, 'bg': 0})
-            for match in matches:
-                key, fg_offset, bg_offset = match.groups()
-                if fg_offset:
-                    offsets[key]['fg'] = int(fg_offset)
-                if bg_offset:
-                    offsets[key]['bg'] = int(bg_offset)
-            return offsets
+    # V1 of the offset function - allows you to change the fg and bg colors of every color setting in the theme
+    def offset_color(self, theme_name, offset_args="0, 10"):
+        offset_fg, offset_bg = map(int, offset_args.split(','))
+        theme_config = self.load_theme_config(theme_name)
+        for color_setting, values in theme_config['color_settings'].items():
+            original_fg = values['fg_color']
+            original_bg = values['bg_color']
 
-        def wrap_color_value(value, offset, max_value=255):
-            return (value + offset) % max_value
+           
+            original_fg = self.remove_ansi_escape_sequences(original_fg)
+            original_bg = self.remove_ansi_escape_sequences(original_bg)
 
-        def apply_offsets_to_config(config, offsets):
-            for category, color_codes in config['meow_colors'].items():
-                if category in offsets or 'all' in offsets:
-                    fg_offset = offsets.get(category, offsets['all'])['fg']
-                    bg_offset = offsets.get(category, offsets['all'])['bg']
-                    # Assumes color codes are stored as integers in the config
-                    if 'fg' in color_codes:
-                        color_codes['fg'] = wrap_color_value(color_codes.get('fg', 0), fg_offset)
-                    if 'bg' in color_codes:
-                        color_codes['bg'] = wrap_color_value(color_codes.get('bg', 0), bg_offset)
-            return config
+            
+            fg_num = int(original_fg.split(';')[-1][:-1]) if original_fg else 0
+            bg_num = int(original_bg.split(';')[-1][:-1]) if original_bg else 0
 
-        offsets = parse_offset_args(offset_args)
-        updated_config = apply_offsets_to_config(config.copy(), offsets)
-        return updated_config
+            
+            new_fg_num = (fg_num + offset_fg) % 256
+            new_bg_num = (bg_num + offset_bg) % 256
+
+        
+            values['fg_color'] = f"\x1b[38;5;{new_fg_num}m"
+            values['bg_color'] = f"\x1b[48;5;{new_bg_num}m"
+
+            print(f"{color_setting}: fg {fg_num}->{new_fg_num}, bg {bg_num}->{new_bg_num}")
+
+        self.colorcat_current_theme_config = theme_config
+        self.save_current_theme_config = theme_config
+        self.save_theme_config_file(theme_name)
+        print(f"Offsets applied to theme '{theme_name}'")
+
+    def remove_ansi_escape_sequences(self, text):
+        """Removes ANSI escape sequences from the given text."""
+        ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
+        return ansi_escape.sub('', text)
     
 
     colorcat_furballs = ["            .';::::::::::::::::::::::::::::::::::::::::::::::::::;,..           ","         .:dOKKKXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXKKOxc'         ","       .ck0KXXNNNNNNXXNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNXKNNNNNNNXXKOo'       ","      'd0KXXNNNNNWKc,;;cd0NWWWWWWWWWWWWWWWWWWWWWWWWWWWXkl;;;;kWNNNNNNXXKk;      ","     .d0KXXNNNNWWWo.:x,.'.:kNMMMMMMMMMMMMMMMMMMMMMMWOl..''od.;XWWNNNNXXXKk,     ","     ;kKXXXNNWWWMWc ;x;'l' .;xXMMMMMMMMMMMMMMMMMMWO:. .c;.do ,KMMWWNNXXXK0l.    ","     ;kKXXXNNWMMMWc :x;';l:;;.;kWWX0OkkxxxkO0KNW0c.,;;cc',do.'0MMMWNNXXKK0l.    ","     ;kKXXXNNWMMMWl ,d;cl;;c:;,.,,.'........'.',..;:c:;cl;lc ;XMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMk..l:';c'c;;c'c;.co;cc,c:lo.'l,::,c,;c';l,.lWMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMNc ;d:.ccc;;c,x:'ldclc;clld,,x:::;ccl';dc.'0MMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMM0,.locc'l,:c.;l';c.cl,c,:l'c:.;c'l;:llo'.xWMMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMMWo.ccloc;.'::.:c;:.cc,c,;ccc.,c,.'colcl';XMMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMWk..:ccol,lo.:;::;:.cc,c,;cc:,c'cd,:dccc'.lNMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMK,.::,co;.;:...,,,;,c;.c:;;;,.. ,c.'ll,;c'.xMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMd.,' 'lo:''.   '..:ol. :dc'..   .,,;lo;..;.;XMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMWc.;c,ox; ;o.  .oo.:o,...ll.,c   .dx..dx;;c.'0MMMWNNXXXKOl.    ","     ;kKXXXNNWMMMWl.::.cxdc;lc'.,oc..:c'';l'.,oc'.;lc;oxo',c.,KMMMWNNXXXKOl.    ","     ;kKXXNNNWMMMMx.':,,;;coccc:c'.,:,cc,c;;:..:c:cllc;;,,:;.lWMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMNl.,c,.;oxko:::c;';;cl;c:;,,::::cxxdc..c:.;KMMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMMXl',:::c::::cld0O,.:olc..d0xlc::::cc::;':0MMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMMMWx..col:,:lclkWWO:....,xNM0ocl:,:cll..lNMMMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMMMM0,;xl;;;;;:okXMMNo. ;XMMW0dc;;;;,cxc'xMMMMMMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMMMWx..lc.;,'c:,,:colcclclol:;':l,';';o' cNMMMMMMWNNXXXKOl.    ","     ;OKXXXNNWMMMMMM0'':okclccc;';;.:x0NNXkl.,:';:cclcxdc'.dWMMMMMWNNXXXKOl.    ","     ;OKXXXNNWMMMMMK;.,,,ccccc,;'.:;'.,;,;..,c'.;,clccl;,,..kWMMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMNc.''';:cod'.cl..cl;:c,:;:l'.:l..ldcc:,''.,0MMMMWNNXXXX0l.    ","     ;kKXXXNNWMMMMk.'oc::;:l;':o::::l::c,::cc:c:lc',c:;::co;.lWMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMWc :ko:dk:.'c:;.:l;;;l;.cc,;cl.':c: 'xkccko.,KMMMWNNXXXKOl.    ","     ;OKXXXNNWMMMWc :l.,kd'.clcxcl:.;c:;,;cc.,lcdocl'.ckc.cl.'0MMMWNNXXXKOl.    ","     ;kKXXXNNWMMMMd';'.;;'''cc;d;c;.l,;ddc'l;'l;oc;l,'',;,.;'cNMMMWNNXXXK0l.    ","     ;kKXXXNNWMMMMXl.'ko:;ccc:...:l.:c'',':c':l...,lcc:;lk:.;0MMMMWNNXXXK0l.    ","     ;kKXXXNNWWMMMMNo.;,;ccdoo,;d:''.:l;'cc'.';oc,codlc:,:':KMMMMMWNNXXXK0l.    ","     ,xKXXXNNWWWMMMMW0l..':oco,.';':dclc;clol',,..lllc,..:kNMMMMMWWNNXXXKOc.    ","     .lOKXXNNNNWWWMMMMWKxc;..,...::...cc,c,..;c.. ''.,:o0WMMMMWWWNNNNXXKKx'     ","      .lOKXXNNNNNNNNNNNNNNXOxl:;','....'......,',:cokKNNNNNNNNNNNNNNNXK0d'      ","        ,dOKXXXXXNNNXXNNNNNNNNNNK0OkxdddddddxkOKXNNNNNNNNNNNNNNNNNXXK0x:.       ","         .,cdk00KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK000KKK0Oxl;.         ","             ..'''''''''''''''''''''''''''''''''''''''''''''''''''.             ","             Colorcat by Ben Gorlick (github: bgorlick) (c) 2024 | MIT     \n",]
@@ -598,6 +614,36 @@ class ColorCatThemes:
         print()
         sys.exit(0)
 
+    def inspect_theme_keys(self, theme_name, keys_str):
+        """Inspect specific keys in the 'color_settings' of the specified theme configuration."""
+        self.colorcat_current_theme_config = self.load_theme_config(theme_name)
+        theme_config = self.colorcat_current_theme_config.get('color_settings', {})
+
+        print(f"Inspecting theme '{theme_name}' color settings:")
+        keys = [key.strip() for key in keys_str.split(',')]
+        
+        for key in keys:
+            try:
+                value = theme_config[key]
+                if isinstance(value, dict) and 'fg_color' in value and 'bg_color' in value:
+                    # escape the ANSI codes so they are not processed by the shell
+                    fg_color = repr(value['fg_color']).strip("'")
+                    bg_color = repr(value['bg_color']).strip("'")
+                    chars = ''.join(value.get('chars', [])) or 'Sample text'
+                    
+                    print(f"{key}:")
+                    print(f"  fg_color: {fg_color}")
+                    print(f"  bg_color: {bg_color}")
+                    print(f"  chars: {chars}")
+                    # unescape the ANSI codes
+                    print(f"  Color example: {bytes(fg_color, 'utf-8').decode('unicode_escape')}{bytes(bg_color, 'utf-8').decode('unicode_escape')}{chars}\033[0m")
+                else:
+                    print(f"{key}: {value}")
+            except KeyError:
+                print(f"{key}: Key not found in theme '{theme_name}' color settings.")
+
+
+
 
 def main():
     color_cat_instance = ColorCatThemes(theme_name='default', colorcat_root_dir=Path.home() / '.config/colorcat')
@@ -613,6 +659,7 @@ def main():
         parser.add_argument('-t', '--theme', default='default', help='Specify the theme name to use')
         parser.add_argument('-dir', '--colorcat-dir', default=str(Path.home() / '.config/colorcat'), help='The directory where colorcat configuration is stored')
         parser.add_argument('-col', '--colors', action='store_true', help='Display an ASCII color grid')
+        parser.add_argument('--inspect', type=str, help='Inspect the values of specific keys in the theme configuration, keys are comma-separated')
         parser.add_argument('-show', '--show-theme-config', action='store_true', help='Show the current theme configuration')
         parser.add_argument('--clean', action='store_true', help='Clean the colorcat directory (delete all theme files)')
         args = parser.parse_args()
@@ -626,11 +673,19 @@ def main():
     if args.theme:
         color_cat_instance.validate_theme_config(args.theme)
 
-    if args.modify_theme:
-        color_cat_instance.apply_modifications(args.modify_theme)
+    if args.modify_theme and args.save_theme:
+        color_cat_instance.apply_modifications(args.theme, args.modify_theme)
+    else:
+        if args.modify_theme:
+            color_cat_instance.apply_modifications(args.theme, args.modify_theme)
+        if args.save_theme:
+            color_cat_instance.save_theme_config_file(args.save_theme)
 
     if args.save_theme:
         color_cat_instance.save_theme_config_file(args.save_theme)
+
+    if args.inspect:
+        color_cat_instance.inspect_theme_keys(args.theme, args.inspect)
 
     if args.show_theme_config:
         color_cat_instance.show_theme_config(theme_name=args.theme)
@@ -650,10 +705,12 @@ def main():
         sys.exit(0)
 
     if args.offset:
-        color_cat_instance.offset_color(args.theme, color_cat_instance.current_theme_config)
+        # offset is expecting two args, fg and bg
+        #if you run it as a cmd line arg, you do it like this: 
+        color_cat_instance.offset_color(args.theme, args.offset)
 
     if args.clean:
-        color_cat_instance.clean_themes_directory(args.colorcat_dir)
+        color_cat_instance.clean_themes_directory()
 
     if args is None:
         print("No arguments provided. Exiting.")
